@@ -67,7 +67,7 @@ def check_fileHeader(readerObj, HEADER_STRING):
         sys.exit(0) # quit the program
 
 
-def check_header2(SAMPLE_NAME_REGEXP, rowOfData):
+def check_sampleHeader(SAMPLE_NAME_REGEXP, rowOfData):
     """Function to check the second header and formats header for distance csv
     Returns raw header and reformatted header"""
     rowLength = len(rowOfData)
@@ -91,7 +91,7 @@ def check_header2(SAMPLE_NAME_REGEXP, rowOfData):
             sampleHeader = rowOfData[i]
 
             # Add the Turns Data sample header as is to the row
-            distHeaderRow.append(sampleHeader)
+            #distHeaderRow.append(sampleHeader)
 
             # Capture the sample name (without 'Turn Data')
             searchObj = re.search(SAMPLE_NAME_REGEXP, sampleHeader)
@@ -192,7 +192,7 @@ if numArgs == 2:
                     firstRowOfFile = True
 
                     # Make sure to check the data header too
-                    checkedHeader2 = False
+                    checkedSampleHeader = False
 
                     # Iterate through every line (row) of the original file
                     for row in originalFileReader:
@@ -210,11 +210,11 @@ if numArgs == 2:
                         # Real data should have at least 3 columns
                         else:
                             # Check second header, is it a multiple of 3?
-                            if not checkedHeader2:
-                                distHeader = check_header2(
+                            if not checkedSampleHeader:
+                                distHeader = check_sampleHeader(
                                     SAMPLE_NAME_REGEXP, row)
 
-                                checkedHeader2 = True
+                                checkedSampleHeader = True
                                 
                                 # Raw data file takes header row as is
                                 rawFileWriter.writerow(row)
@@ -231,7 +231,7 @@ if numArgs == 2:
                                 distanceRow = [row[0], row[1]]
                                 for i in xrange(2, len(row), 3):
                                     sampleData = row[i]
-                                    distanceRow.append(sampleData)
+                                    #distanceRow.append(sampleData)
                                     meterData = float(sampleData) * 0.361
                                     distanceRow.append(meterData)
                                 distFileWriter.writerow(distanceRow)
@@ -458,66 +458,66 @@ if numArgs == 2:
                             runStreaksFileWriter.writerow(z)
 
 
-    print "Finished calculations and generated csv file output."
-    print "Dumping all data into excel file. Takes a minute..."
+    # print "Finished calculations and generated csv file output."
+    # print "Dumping all data into excel file. Takes a minute..."
 
-    # Create an Excel workbook to house this stuff
-    wb = Workbook()
+    # # Create an Excel workbook to house this stuff
+    # wb = Workbook()
 
-    # Grab first sheet
-    miceSheet = wb.active
-    miceSheet.title = "Mice Summary"
+    # # Grab first sheet
+    # miceSheet = wb.active
+    # miceSheet.title = "Mice Summary"
 
-    # Create a new sheet for the rest
-    rawSheet = wb.create_sheet(title='Raw Data')
-    distSheet = wb.create_sheet(title="Calculated Distances")
-    filterSheet = wb.create_sheet(title="Time Filtered")
-    hourlySheet = wb.create_sheet(title="Summed Hourly")
-    cumulativeSheet = wb.create_sheet(title="Cumulative")
-    runStreakSheet = wb.create_sheet(title="Running Streaks")
+    # # Create a new sheet for the rest
+    # rawSheet = wb.create_sheet(title='Raw Data')
+    # distSheet = wb.create_sheet(title="Calculated Distances")
+    # filterSheet = wb.create_sheet(title="Time Filtered")
+    # hourlySheet = wb.create_sheet(title="Summed Hourly")
+    # cumulativeSheet = wb.create_sheet(title="Cumulative")
+    # runStreakSheet = wb.create_sheet(title="Running Streaks")
 
-    # Open each file and place it into their excel sheets
-    with open(miceCsvName, 'rb') as miceCsvFile:
-        miceFileReader = csv.reader(miceCsvFile, delimiter=",", quotechar='"')
-        for row in miceFileReader:
-            miceSheet.append(row)
+    # # Open each file and place it into their excel sheets
+    # with open(miceCsvName, 'rb') as miceCsvFile:
+    #     miceFileReader = csv.reader(miceCsvFile, delimiter=",", quotechar='"')
+    #     for row in miceFileReader:
+    #         miceSheet.append(row)
 
-    with open(rawCsvName, 'rb') as rawCsvFile:
-        rawFileReader = csv.reader(rawCsvFile, delimiter=",", quotechar='"')
-        for row in rawFileReader:
-            rawSheet.append(row)
+    # with open(rawCsvName, 'rb') as rawCsvFile:
+    #     rawFileReader = csv.reader(rawCsvFile, delimiter=",", quotechar='"')
+    #     for row in rawFileReader:
+    #         rawSheet.append(row)
 
-    with open(distCsvName, 'rb') as distCsvFile:
-        distFileReader = csv.reader(distCsvFile, delimiter=",", quotechar='"')
-        for row in distFileReader:
-            distSheet.append(row)
+    # with open(distCsvName, 'rb') as distCsvFile:
+    #     distFileReader = csv.reader(distCsvFile, delimiter=",", quotechar='"')
+    #     for row in distFileReader:
+    #         distSheet.append(row)
 
-    with open(filterCsvName, 'rb') as filterCsvFile:
-        filterFileReader = csv.reader(filterCsvFile, delimiter=",", quotechar='"')
-        for row in filterFileReader:
-            filterSheet.append(row)
+    # with open(filterCsvName, 'rb') as filterCsvFile:
+    #     filterFileReader = csv.reader(filterCsvFile, delimiter=",", quotechar='"')
+    #     for row in filterFileReader:
+    #         filterSheet.append(row)
 
-    with open(hourlyCsvName, 'rb') as hourlyCsvFile:
-        hourlyFileReader = csv.reader(hourlyCsvFile, delimiter=",", quotechar='"')
-        for row in hourlyFileReader:
-            hourlySheet.append(row)
+    # with open(hourlyCsvName, 'rb') as hourlyCsvFile:
+    #     hourlyFileReader = csv.reader(hourlyCsvFile, delimiter=",", quotechar='"')
+    #     for row in hourlyFileReader:
+    #         hourlySheet.append(row)
 
-    with open(cumulativeCsvName, 'rb') as cumulativeCsvFile:
-        cumulativeFileReader = csv.reader(cumulativeCsvFile, delimiter=",", quotechar='"')
-        for row in cumulativeFileReader:
-            cumulativeSheet.append(row)
+    # with open(cumulativeCsvName, 'rb') as cumulativeCsvFile:
+    #     cumulativeFileReader = csv.reader(cumulativeCsvFile, delimiter=",", quotechar='"')
+    #     for row in cumulativeFileReader:
+    #         cumulativeSheet.append(row)
 
-    with open(runStreaksCsvName, 'rb') as runStreaksCsvFile:
-        runStreaksCsvFileReader = csv.reader(runStreaksCsvFile, delimiter=",", quotechar='"')
-        for row in runStreaksCsvFileReader:
-            runStreakSheet.append(row)
+    # with open(runStreaksCsvName, 'rb') as runStreaksCsvFile:
+    #     runStreaksCsvFileReader = csv.reader(runStreaksCsvFile, delimiter=",", quotechar='"')
+    #     for row in runStreaksCsvFileReader:
+    #         runStreakSheet.append(row)
 
 
-    # Save the excel file
-    excelFileName = fileNameNoExtension + '_FINAL.xlsx'
-    wb.save(excelFileName)
+    # # Save the excel file
+    # excelFileName = fileNameNoExtension + '_FINAL.xlsx'
+    # wb.save(excelFileName)
 
-    print "Complete. Data output to: %s" % (excelFileName)
+    # print "Complete. Data output to: %s" % (excelFileName)
 
 else:
     print USAGE
