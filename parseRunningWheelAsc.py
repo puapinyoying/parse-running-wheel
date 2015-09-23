@@ -313,11 +313,17 @@ if numArgs == 2:
                             listOfStreaks.append([])
                             t += 1
 
-                        # Set our filter criteria, start after 6pm day 1
-                        # end at 6am day 3
+################################################################################
+######################### Set Time Filter Here #################################
+################################################################################
+                        # Set our filter criteria, start after 6pm day 1, end at 6am day 3
+
+                        # current setting chooses start date as first day, but it can be
+                        # changed to a litteral date e.g. distRow1[0] --> '01/31/15'
                         startDateTimeString = '%s %s' % (distRow1[0], '18:00:00')
                         startDateTime = datetime.strptime(startDateTimeString, '%m/%d/%y %H:%M:%S')
                         endDateTime = startDateTime + timedelta(days=3) - timedelta(hours=12)
+################################################################################
 
                         hourNum = 1
                         distRowNum = 1
@@ -458,66 +464,66 @@ if numArgs == 2:
                             runStreaksFileWriter.writerow(z)
 
 
-    # print "Finished calculations and generated csv file output."
-    # print "Dumping all data into excel file. Takes a minute..."
+    print "Finished calculations and generated csv file output."
+    print "Dumping all data into excel file. Takes a minute..."
 
-    # # Create an Excel workbook to house this stuff
-    # wb = Workbook()
+    # Create an Excel workbook to house this stuff
+    wb = Workbook()
 
-    # # Grab first sheet
-    # miceSheet = wb.active
-    # miceSheet.title = "Mice Summary"
+    # Grab first sheet
+    miceSheet = wb.active
+    miceSheet.title = "Mice Summary"
 
-    # # Create a new sheet for the rest
-    # rawSheet = wb.create_sheet(title='Raw Data')
-    # distSheet = wb.create_sheet(title="Calculated Distances")
-    # filterSheet = wb.create_sheet(title="Time Filtered")
-    # hourlySheet = wb.create_sheet(title="Summed Hourly")
-    # cumulativeSheet = wb.create_sheet(title="Cumulative")
-    # runStreakSheet = wb.create_sheet(title="Running Streaks")
+    # Create a new sheet for the rest
+    rawSheet = wb.create_sheet(title='Raw Data')
+    distSheet = wb.create_sheet(title="Calculated Distances")
+    filterSheet = wb.create_sheet(title="Time Filtered")
+    hourlySheet = wb.create_sheet(title="Summed Hourly")
+    cumulativeSheet = wb.create_sheet(title="Cumulative")
+    runStreakSheet = wb.create_sheet(title="Running Streaks")
 
-    # # Open each file and place it into their excel sheets
-    # with open(miceCsvName, 'rb') as miceCsvFile:
-    #     miceFileReader = csv.reader(miceCsvFile, delimiter=",", quotechar='"')
-    #     for row in miceFileReader:
-    #         miceSheet.append(row)
+    # Open each file and place it into their excel sheets
+    with open(miceCsvName, 'rb') as miceCsvFile:
+        miceFileReader = csv.reader(miceCsvFile, delimiter=",", quotechar='"')
+        for row in miceFileReader:
+            miceSheet.append(row)
 
-    # with open(rawCsvName, 'rb') as rawCsvFile:
-    #     rawFileReader = csv.reader(rawCsvFile, delimiter=",", quotechar='"')
-    #     for row in rawFileReader:
-    #         rawSheet.append(row)
+    with open(rawCsvName, 'rb') as rawCsvFile:
+        rawFileReader = csv.reader(rawCsvFile, delimiter=",", quotechar='"')
+        for row in rawFileReader:
+            rawSheet.append(row)
 
-    # with open(distCsvName, 'rb') as distCsvFile:
-    #     distFileReader = csv.reader(distCsvFile, delimiter=",", quotechar='"')
-    #     for row in distFileReader:
-    #         distSheet.append(row)
+    with open(distCsvName, 'rb') as distCsvFile:
+        distFileReader = csv.reader(distCsvFile, delimiter=",", quotechar='"')
+        for row in distFileReader:
+            distSheet.append(row)
 
-    # with open(filterCsvName, 'rb') as filterCsvFile:
-    #     filterFileReader = csv.reader(filterCsvFile, delimiter=",", quotechar='"')
-    #     for row in filterFileReader:
-    #         filterSheet.append(row)
+    with open(filterCsvName, 'rb') as filterCsvFile:
+        filterFileReader = csv.reader(filterCsvFile, delimiter=",", quotechar='"')
+        for row in filterFileReader:
+            filterSheet.append(row)
 
-    # with open(hourlyCsvName, 'rb') as hourlyCsvFile:
-    #     hourlyFileReader = csv.reader(hourlyCsvFile, delimiter=",", quotechar='"')
-    #     for row in hourlyFileReader:
-    #         hourlySheet.append(row)
+    with open(hourlyCsvName, 'rb') as hourlyCsvFile:
+        hourlyFileReader = csv.reader(hourlyCsvFile, delimiter=",", quotechar='"')
+        for row in hourlyFileReader:
+            hourlySheet.append(row)
 
-    # with open(cumulativeCsvName, 'rb') as cumulativeCsvFile:
-    #     cumulativeFileReader = csv.reader(cumulativeCsvFile, delimiter=",", quotechar='"')
-    #     for row in cumulativeFileReader:
-    #         cumulativeSheet.append(row)
+    with open(cumulativeCsvName, 'rb') as cumulativeCsvFile:
+        cumulativeFileReader = csv.reader(cumulativeCsvFile, delimiter=",", quotechar='"')
+        for row in cumulativeFileReader:
+            cumulativeSheet.append(row)
 
-    # with open(runStreaksCsvName, 'rb') as runStreaksCsvFile:
-    #     runStreaksCsvFileReader = csv.reader(runStreaksCsvFile, delimiter=",", quotechar='"')
-    #     for row in runStreaksCsvFileReader:
-    #         runStreakSheet.append(row)
+    with open(runStreaksCsvName, 'rb') as runStreaksCsvFile:
+        runStreaksCsvFileReader = csv.reader(runStreaksCsvFile, delimiter=",", quotechar='"')
+        for row in runStreaksCsvFileReader:
+            runStreakSheet.append(row)
 
 
-    # # Save the excel file
-    # excelFileName = fileNameNoExtension + '_FINAL.xlsx'
-    # wb.save(excelFileName)
+    # Save the excel file
+    excelFileName = fileNameNoExtension + '_FINAL.xlsx'
+    wb.save(excelFileName)
 
-    # print "Complete. Data output to: %s" % (excelFileName)
+    print "Complete. Data output to: %s" % (excelFileName)
 
 else:
     print USAGE
