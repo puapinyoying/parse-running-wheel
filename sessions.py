@@ -75,7 +75,7 @@ def formatRawDf(rawDf):
     colNames = df2.columns
 
     # Create a regular expression formula
-    REG_EXP = r'^([\w\/\s\-]+) Turns Data'
+    REG_EXP = r'^([\w\/\s\-\)\(]+) Turns Data'
 
     sampleName = re.search(REG_EXP, colNames[0])
 
