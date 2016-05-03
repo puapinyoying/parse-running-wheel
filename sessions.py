@@ -1,46 +1,45 @@
 #! /usr/bin/env python
 
-# prw_pandas
-
 # Import libraries for data analysis
 
 import re
 import os
+import csv
 import sys
 import tqdm
 import argparse
 import textwrap
 import numpy as np
 import pandas as pd
-import matplotlib as plt
 from datetime import datetime
 from pandas import Series, DataFrame
-from matplotlib.backends.backend_pdf import PdfPages
-
+#import matplotlib as plt
+#from matplotlib.backends.backend_pdf import PdfPages
 
 # Regular Expressions and static (unchanging) variables 
-SAMPLE_NAME_REGEXP = r'([\w \/]+) Turns Data'
-FILE_NAME_REGEXP = r'(.+)\..+'
+SAMPLE_NAME_REGEXP = r'([\w \/\)\(\-\.\|]+) Turns Data'
+FILE_NAME_REGEXP = r'(.+)\.(.+)'
 HEADER_STRING = 'Experiment Logfile:'
 
-
- # how to deal with NAs: fillna with zero, fill forward fill back
- # I think backfill is best option, with limit 1, or fill zeros for more
- # conservative take
-
+#########################################################
+### Section below contains functions for calculations ###
+#########################################################
 
 def formatRawDf(rawDf):
 
     nullRows = rawDf.iloc[:,2::3].isnull().sum()
-    print "Mouse", 'Num Missing Values'
-    print nullRows
-    print '\nWarning: The above null values were back filled'
+    print '\nWarning: Null values below will be back filled'
+    nullRows.index.name = 'column_name'
+    nullRows.name = 'null_value_count'
+    nullRows = nullRows.reset_index()
+    print nullRows # Output to stdout
+
     # print '\nWarning: The above null values were replaced with zeros'
     
-    # back fill
+    # how to deal with NAs: fillna with zero, fill forward fill back
+    # I think backfill is best option, with limit 1, or fill zeros for more
+    # conservative take (use 'ffill' for forward fill)
     rawFill = rawDf.fillna(method='bfill', limit=1)
-    #print rawFill.iloc[8183,:]
-
     #rawFill = rawDf.fillna(0) # fill with zeros
 
     # Create a column with date and time merged
@@ -65,40 +64,49 @@ def formatRawDf(rawDf):
     # '3' means go in steps of 3 (jump over 2 columns so we can get just data)
     df1 = df.iloc[:, 2::3]
 
-    # Add a column header
+    # Add a name for all column headers
     df1.columns.name = 'condition'
 
-    # multiply all turns data by 0.361 to convert turns to meters
-    df2 = df1 * 0.361
+    df2 = df1 * 0.361 # mult all turns data by 0.361 to convert turns to meters
 
     # Select the column names so we can rename them
     colNames = df2.columns
 
     # Create a regular expression formula
-    REG_EXP = r'^([\w\/\s\-\)\(]+) Turns Data'
+    REG_EXP = r'^([\w\/\s\-]+) Turns Data'
 
     sampleName = re.search(REG_EXP, colNames[0])
 
-    # Loop through whole column list and rename everything
+    # Loop through list of column headers. We want to:
+    # 1. Remove 'Turns Data' to obtain just the sample name
+    # 2. Remove any spaces, periods, slashes and plus signs
+    # 3. Replace with underscores '_'
     newColNames = []
 
     for name in colNames:
         temp = re.search(REG_EXP, name)
         newName = temp.group(1)
-        newColNames.append(newName)
+        cleanName = re.sub(r'[\/\+\s\.]', r'_', newName)
+        newColNames.append(cleanName)
 
-    # Sub the old column names for the new ones
-    df2.columns = newColNames
+    df2.columns = newColNames # Sub the old column names for the new ones
     df2.columns.name = 'condition'  # got erased, add back
+    df2.index.name = 'date_time'
 
-    return df2, nullRows  # returns formatted dataframe and number of rows with null values
+    return df2, nullRows  # returns formatted df and num of rows with null vals
 
-
-# Function used to create a sessions dataframe from formated dataframe
 def calcSessions(df):
+    """Calculates running session data. Each session consists of a run phase
+    followed by a rest phase. Function outputs a dictionary containing a
+    session dataframe for each animal in the formatted dataframe. Each session
+    dataframe contains columns for session number, run start time,
+    run stop time, number of minutes run, distance run, velocity of run,
+    rest start time, rest end time, number of minutes rested, run observed and
+    rest observed."""
+
     colList = df.columns
 
-    newDf = DataFrame()
+    sessionDict = {} # Dictionary to house all animal's session dataframes
 
     # iterate over list of column names and use to access data from each column
     for pos, col in enumerate(colList):
@@ -106,273 +114,227 @@ def calcSessions(df):
         # reset the dateTime index (place index back as a data column)
         resetCol = df.iloc[:,pos].reset_index()
         row_iter = resetCol.itertuples() # create iterator for accessing row data
+        colLen = len(resetCol[col])  # keep track of number of rows in column 
 
-        # make some variables
-        phaseMins = 0
-        phaseDist = 0
-        phaseStartTime = ''
-        phaseEndTime = ''
-        sessionNum = 0
-        phaseCount = 0
-        prevTime = ''
-        currTime = ''
-        prevDist = 0
+        # Create some variables
+        runMins = 0        # current sum of minutes in run phase
+        runDist = 0        # current sum of distance in run phase
+        runMinsList = []   # list of minutes per run phase
+        runDistList = []   # list of distances per run phase
+        runStartList = []  # list of run start times
+        runEndList = []    # list of run end times
+
+        restMins = 0       # curren sum of minutes in rest phase
+        restMinsList = []  # current list of minutes for each rest phase
+        restStartList = [] # list of rest start times
+        restEndList = []   # list of rest end times
+
+        # Keep track of previous and current times and distance
+        #prevTime = None
+        currTime = None
+        prevDist = None
         currDist= 0
-
-        subjectList = []
-        phaseList = []
+        
+        # Create new dictionary to house current animal's session data
+        sessionDf = DataFrame()
 
         # iterate over each row in the column of data
         for rowNum, row in enumerate(row_iter):     
             currDist = row[2]
             currTime = row[1]
 
-            # If the mouse is running
-            if rowNum == 0:
-                phaseStartTime = currTime
-            
-            if currDist > 0: 
-                # If the previous distance value is zero and the current is not
-                # then it is end of rest phase. write the 'rest' phase data to list   
-                if (prevDist == 0) & (rowNum > 0):
-                    phaseList.append(sessionNum)
-                    phaseList.append('rest')
-                    phaseList.append(phaseStartTime)
-                    phaseEndTime = currTime
-                    phaseList.append(phaseEndTime)
-                    phaseList.append(phaseMins)
-                    phaseList.append(0)
-                    phaseList.append(0)
+            # If this is the first session
+            if prevDist == None:
+                if currDist > 0: # run phase
+                    runStartList.append(currTime)
+                    runMins += 1
+                    runDist += currDist
 
-                    # clear old results
-                    phaseMins = 0
-                    phaseDist = 0
-                    phaseStartTime = currTime
-                    prevTime = currTime
+                else: # if currDist == 0; or rest phase
+                    restStartList.append(currTime)
+                    restMins += 1
+
+                    # If the animal started with a rest phase, then append empty
+                    # values for the run phase. We want every session to start 
+                    # with a run phase then followed by a rest phase.
+                    runStartList.append(None)
+                    runEndList.append(None)
+                    runMinsList.append(None)
+                    runDistList.append(None)
+
+                prevDist = currDist
+                prevTime = currTime
+
+            elif prevDist == 0: # if animal was resting last minute
+                if currDist == 0: # and currently resting this minute
+                    restMins += 1
                     prevDist = currDist
 
-                    # Add new phase values
-                    phaseMins += 1
-                    phaseDist += currDist
+                else:  # currDist > 0; End of rest phase, close out
+                    restEndList.append(currTime)
+                    restMinsList.append(restMins)
+                    restMin = 0 # reset accumilated rest minute total
 
-                    # Add new session only after a rest phase
-                    sessionNum += 1
-
-                    # add to session list and clear phase list
-                    subjectList.append(phaseList)
-                    phaseList = []
-
-
-                else:
-                    # just keep adding to the phase data
-                    phaseMins += 1
-                    phaseDist += currDist
-                    prevTime = currTime
+                    # Beginnin new run phase
+                    runStartList.append(currTime)
+                    runMins = 0 # Make sure to reset first
+                    runMins += 1
+                    runDist += currDist
                     prevDist = currDist
 
-            else:
-                # if distance value is currently zero and the previous was 
-                # higher than zero, that means it reach the end of a run phase
-                # write run phase data to list
-                if (prevDist > 0):
-                    phaseList.append(sessionNum)
-                    phaseList.append('run')
-                    phaseList.append(phaseStartTime)
-                    phaseEndTime = currTime
-                    phaseList.append(phaseEndTime)
-                    phaseList.append(phaseMins)
-                    phaseList.append(phaseDist)
-                    avgVelocity = phaseDist/phaseMins
-                    phaseList.append(avgVelocity)
-
-                    # clear old results
-                    phaseMins = 0
-                    phaseDist = 0
-                    phaseStartTime = currTime
-                    prevTime = currTime
+            elif prevDist > 0: # If animal was running last minute
+                if currDist > 0: # and currently running this minute
+                    runMins += 1
+                    runDist += currDist
                     prevDist = currDist
 
-                    # add new phase information
-                    phaseMins += 1
-                    phaseDist += currDist
+                else: # currDist == 0; End of running phase, close out
+                    runMinsList.append(runMins)
+                    runDistList.append(runDist)
+                    runEndList.append(currTime)
+                    runMins = 0 # reset accumilated run phase minutes
+                    runDist = 0 # reset accumilated run phase distance
 
-                    # add to session list and clear phase list
-                    subjectList.append(phaseList)
-                    phaseList = []
 
-                else:
-                    phaseMins += 1
-                    phaseDist += currDist
-                    prevTime = currTime
+                    # Also start of new rest phase
+                    restStartList.append(currTime)
+                    restMins = 0 # reset resting minutes first
+                    restMins += 1
                     prevDist = currDist
 
-        # create the hierarchical column names and create a new data frame to
-        # house the data
-        subjCols = [[col]*7, ['session', 'phase', 'start','end','mins','distance(m)','avg_velocity(m/min)']]
-        newCols = pd.MultiIndex.from_arrays(subjCols, names=['subjects', 'values'])
-        sub_df = DataFrame(subjectList, columns=newCols)
-        #print sub_df
-        newDf = pd.concat([newDf, sub_df], axis=1)
-        subjectList = []
+            if rowNum == colLen - 1:  # If its the last row
+                if currDist > 0: # Animal is still running; end here
+                    runMinsList.append(runMins)
+                    runDistList.append(runDist)
+                    runEndList.append(currTime)
+                    
+                    # This final run time incomplete due to end of experiment
+                    # so this session does not have a resting phase
+                    restStartList.append(None)
+                    restEndList.append(None)
+                    restMinsList.append(None)
 
-    return newDf
+                else: # currDist == 0: Animal is still resting
+                    restMinsList.append(restMins) # close out rest minutes
+                    restEndList.append(currTime)
+                        
+                # Create a dictionary of all the lists to form a new data frame
+                resultsDict = {'run_start':runStartList, 'run_end':runEndList, 
+                           'run_mins':runMinsList,'run_dist(m)':runDistList, 
+                           'rest_start':restStartList, 'rest_end':restEndList, 
+                           'rest_mins':restMinsList}
+             
+                # use the results dictionary to make dataframe
+                sessionDf = DataFrame(resultsDict) 
 
-# for use in parse phase ('trimming')
-def rmUnpairedPhase(animalDf):
-    trimmedAnimalDf = ''
-    # Each animal has different # of sessions, so pandas places NAs to even
-    # out the rows in the large dataframe. Need to remove Nas to get real number
-    # of phases
-    drpNaDf = animalDf[animalDf.mins.notnull()]
-    #print drpNaDf.head() 
-    phases = drpNaDf.phase  # get phase column data
-    numPhases = len(phases)
-    lastPhase = phases[numPhases-1]
+        # Place each animal's session df into a session dict for all animals. 
+        # Each animal's session dataframe can now be accessed by providing the 
+        # animal name as the dictionary's key.
+        sessionDict[col] = sessionDf 
 
-    if (drpNaDf.phase[0] == 'rest'):
-        if (drpNaDf.phase[numPhases-1] == 'run'):
-            trimmedAnimalDf = drpNaDf.iloc[1:(numPhases-1),:]
-            #print 'one', numPhases, len(trimmedAnimalDf.phase), lastPhase, len(animalDf.phase)
-            return trimmedAnimalDf
-        else:
-            trimmedAnimalDf = drpNaDf.iloc[1:,:]
-            #print 'two', numPhases, len(trimmedAnimalDf.phase), lastPhase, len(animalDf.phase)
-            return trimmedAnimalDf
-    elif (drpNaDf.phase[0] == 'run'): 
-        if (drpNaDf.phase[numPhases-1] == 'run'):
-            trimmedAnimalDf = drpNaDf.iloc[:(numPhases-1),:]
-            #print 'three', numPhases, len(trimmedAnimalDf.phase), lastPhase, len(animalDf.phase)
-            return trimmedAnimalDf
-        else:
-            trimmedAnimalDf = drpNaDf.iloc[:,:]
-            #print 'four', numPhases, len(trimmedAnimalDf.phase), lastPhase, len(animalDf.phase)
-            return trimmedAnimalDf
+    return sessionDict
+
+def observed(x):
+    """Used in calcObsCols(). Simple test to see if data is present. 
+    If None, then return False"""
+    if x == None:
+        return False
     else:
-        print "five"
+        return True
 
-# for use in parse phase ('pruning')
-def rmStartingRestOnly(animalDf):
-    prunedAnimalDf = ''
-    drpNaDf = animalDf[animalDf.mins.notnull()] 
-    phases = drpNaDf.phase  # get phase column data
-    numPhases = len(phases)
-    lastPhase = phases[numPhases-1]
+def calcObsCols(sessionDf):
+    """Used in reformatSessions(). Check to see if a run or rest was observed 
+    for each session, return both columns."""
+    runObsCol = sessionDf.run_start.apply(observed)
+    restObsCol = sessionDf.rest_start.apply(observed)
+    runObsCol.name = 'run_obs'
+    restObsCol.name = 'rest_obs'
+    return runObsCol, restObsCol
 
-    if (drpNaDf.phase[0] == 'rest'):
-        prunedAnimalDf = drpNaDf.iloc[1:,:]
-        #print 'one', numPhases, lastPhase, len(animalDf.phase)
-        return prunedAnimalDf
+def calcVelocityCol(sessionDf):
+    """Used in reformatSessions(). Calculate the velocity of each run session 
+    and return column of data"""
+    velocityCol = sessionDf['run_dist(m)'] / sessionDf['run_mins']
+    velocityCol.name = 'velocity(m/min)'
+    return velocityCol
 
-    else:
-        prunedAnimalDf = drpNaDf.iloc[:,:]
-        #print 'four', numPhases, lastPhase, len(animalDf.phase)
-        return prunedAnimalDf
-
-# for use in parse phase
-def formatSurvival(runs, rests):
-
-    runsSel = runs.iloc[:,1:6] # select most colums
-    restsSel = rests.iloc[:,1:4] # leave out a few
-
-    # combine cols into single dataframe
-    d = pd.concat([runsSel,restsSel], axis=2) 
+def reformatSessions(sessionDict):
+    """Reformats the SessionDict from calcSessions(). Calculates and adds
+    new columns to each sessionDf including:
+        1. Session column
+        2. Run velocity column
+        3. Run observed column
+        4. Rest observed column
+    Finally, it creates a new dataframe and reorganizes the columns."""
+    reformatedDict = {} # new session dictionary for added and reformated cols
     
-    # rename headers
-    d.columns = ['run_start', 'run_end', 'run_mins', 'run_dist', 'avg_v', 'rest_start','rest_end', 'rest_min']
-    d.columns.name = 'values'
+    for animalName, df in sessionDict.iteritems():
+        
+        # Do calculations and get columns
+        runObsCol, restObsCol = calcObsCols(df)
+        velocityCol = calcVelocityCol(df)
+        #sessionCol = calcSessionCol(df)
+        
+        # Join all columns into a single dataframe
+        joinedDf = pd.concat([df,velocityCol,runObsCol, restObsCol],
+                                axis=1)
 
-    # Reset index to make independent of session number. Session numbers were zero based but some were trimmed
-    # because they started in a rest phase. Therefore, some animals had their first session number starting with 1.
-    # If not reset, can cause problems when trying to use the length to get_item by an index number
-    d2 = d.reset_index()
+        resetDf = joinedDf.reset_index()  # reset the index
+        
+        # Make a list of column names in the order we want
+        colOrder = ['run_start', 'run_end', 'run_mins', 
+                    'run_dist(m)', 'velocity(m/min)', 'rest_start',
+                    'rest_end', 'rest_mins', 'run_obs', 'rest_obs']
+        
+        arrangedDf = resetDf[colOrder]
+        arrangedDf.index = arrangedDf.index + 1
+        arrangedDf.index.name = 'session'
 
-    # get the total number of rows in the dataframe and get the last resting minute value
-    rowNum = len(d2)
-    lastRestMin = d2.rest_min[rowNum-1]
+        reformatedDict[animalName] = arrangedDf
+        
+    return reformatedDict
 
-    # Create two new series to be put into the dataframe
-    # run_obs is whether or not the last run phase was observed to completion (1) or if it was censored (0)
-    # rest_obs is whether or not the last resting phase was observed to completion (1) or if it was censored (0)
-    # censored meaning the run or rest was still going while the data collection stopped / was cut off
-    run_obs = Series([1]*rowNum, name='run_obs') # fill default series assuming all were observed
-    rest_obs = Series([1]*rowNum, name='rest_obs')
 
-    # Modify series of observations based on last resting minute
-    # If lastRestMin is missing data, then there was no rest phase for the last session (None). That also means
-    # the last run phase did not complete. Therefore, the last run was not observed to completion (0).
-    if pd.isnull(lastRestMin):
-        run_obs[rowNum-1] = 0
-        rest_obs[rowNum-1] = None
-    
-    # lastRestMin does contain values.  This means the last session's running phase was seen to completion
-    # so we leave the last run_obs as a (1). However, the resting phase continued to the end of data collection.
-    # Therefore the rest phase was not observed to completion (0)
-    else:
-        rest_obs[rowNum-1] = 0
+def calcPercentRunRest(sessionDict):
+    '''Calculate the percentage the animal ran and rested of the total time the
+    data was collected. If data was collected one row per minute, the number of
+    rows in the raw data file should correspond to the sum total of minutes.'''
+    # Create an empy dictionary list for creating a dataframe in the end
+    dictList = []
 
-    # combine the new observation series as columns in the previous dataframe & set the index back to session
-    temp = pd.concat([d2,run_obs, rest_obs], axis=2)
-    d3 = temp.set_index('session')
-    
-    return d3
+    for animalName, df in sessionDict.iteritems():
+        sumMinsRun = df.run_mins.sum()
+        sumDistRun = df['run_dist(m)'].sum()
+        sumMinsRest = df.rest_mins.sum()
+        sumTotal = sumMinsRun + sumMinsRest
+        percentRun = (sumMinsRun / sumTotal) * 100
+        percentRest = (sumMinsRest / sumTotal) * 100
 
-# Take original session dataframe and split into runs only and rest only dfs
-# Also calls rmUnpairedPhase() to remove a rest phases at the beginning or an
-# run phase at the end of the df. Important for scatter plots (need same
-# number of x & y coordinates)
+        # Create a dictionary for each row to be in the dataframe
+        rowDict = {'animal':animalName, 'sum_mins_run':sumMinsRun, 
+                    'sum_mins_rest':sumMinsRest, 'sum_dist_run(m)':sumDistRun,
+                    'total_mins':sumTotal, 'percent_run':percentRun, 
+                    'percent_rest':percentRest}
 
-def parsePhase(sessionDf):
-    
-    animalDict = {}
-    
-    animals = sessionDf.columns.levels[0]
-    for animal in animals:
-        
-        # Original Session Data for current animal
-        animalDf = sessionDf[animal]
-        
-        
-        # Parse sessions into different phases for output
-        tempRuns = animalDf[animalDf.phase == 'run']
-        runs = tempRuns.set_index('session') # set the index to session instead
-        
-        tempRests = animalDf[animalDf.phase == 'rest']
-        rests = tempRests.set_index('session')
+        dictList.append(rowDict) # Add to the dictionary list
 
-        
-        ### Trimm any starting rests or unfinished runs at the end for scatter plots if exist
-        # (x & y must be equal length)
-        trimAnimalDf = rmUnpairedPhase(animalDf)
-        
-        tempRuns = trimAnimalDf[trimAnimalDf.phase == 'run']
-        trimRuns = tempRuns.set_index('session')
-        
-        tempRests = trimAnimalDf[trimAnimalDf.phase == 'rest']
-        trimRests = tempRests.set_index('session')
-        
-        
-        ### Prune just the starting rests if exist, for survival curve
-        prunedAnimalDf = rmStartingRestOnly(animalDf)
-        
-        tempRuns = prunedAnimalDf[prunedAnimalDf.phase == 'run']
-        prunedRuns = tempRuns.set_index('session')
-        
-        tempRests =  prunedAnimalDf[prunedAnimalDf.phase == 'rest']
-        prunedRests = tempRests.set_index('session')
-        
-        
-        ### Create dataframe for survival curves using pruned rests and runs
-        survivalDf = formatSurvival(prunedRuns, prunedRests)
-        
-        cleanName = re.sub(r'[\/\+\s]', r'_', animal)
-        
-        
-        animalDict.update({cleanName: [animalDf, runs, rests, trimAnimalDf, trimRuns, trimRests, 
-                                       prunedAnimalDf, prunedRuns, prunedRests, survivalDf]})
+    # When done, create the dataframe and return it.
+    percentRunRestDf = DataFrame(dictList)
 
-    return animalDict
+    return percentRunRestDf
 
-def outputAllToFile(rawDf, formattedDf, nullRows, animalDict, cohortName):
+
+
+###########################################################################
+### Section below contains functions for input/output and parsing files ###
+###########################################################################
+
+
+def outputAllToFile(rawDf, formattedDf, percentRunRestDf, nullRows, sessionDict,
+                        cohortName):
+    """Creates a cohort folder in current directory and output's all the 
+    data frames for each sample."""
+
     currWorkingDir = os.getcwd()
     newDirPath = os.path.join(currWorkingDir, cohortName)
 
@@ -380,62 +342,26 @@ def outputAllToFile(rawDf, formattedDf, nullRows, animalDict, cohortName):
         os.makedirs(newDirPath)
 
     # output main formatted data frame
-    rawDf.to_csv(os.path.join(newDirPath, cohortName +'_raw_data.csv'))
+    rawDf.to_csv(os.path.join(newDirPath, cohortName +'_rawdata.csv'))
     nullRows.to_csv(os.path.join(newDirPath, cohortName +'_num_null.csv'))
     formattedDf.to_csv(os.path.join(newDirPath, cohortName +'_formatted.csv'))
-
-    # see if you can output null rows along with raw data in future
+    percentRunRestDf.to_csv(os.path.join(newDirPath, cohortName + '_percentRunRest.csv'))
 
     # Output session data frames
-    for key in animalDict:
-        # make a new folder for each animal
-        animalDirPath = os.path.join(newDirPath, key)
-        if not os.path.exists(animalDirPath):
-            os.makedirs(animalDirPath)
-
-        print "Outputting Tables for: ", key
-        allDf = animalDict[key][0]
-        runsDf = animalDict[key][1]
-        restsDf = animalDict[key][2]
-
-        # Orginal data
-        allDf.to_csv(os.path.join(animalDirPath, key + '_sessions.csv'))
-        runsDf.to_csv(os.path.join(animalDirPath, key + '_run_phases.csv'))
-        restsDf.to_csv(os.path.join(animalDirPath, key + '_rest_phases.csv'))
-        
-        # Trimmed data - removes any starting rests or unfinished runs at the end
-        # if exist.  Useful for for scatter plots (x & y must be equal length)
-        allTrimDf = animalDict[key][3]
-        trimRunsDf = animalDict[key][4]
-        trimRestsDf = animalDict[key][5]
-
-        allTrimDf.to_csv(os.path.join(animalDirPath, key + '_trim_sessions.csv'))
-        trimRunsDf.to_csv(os.path.join(animalDirPath, key + '_trim_run_phases.csv'))
-        trimRestsDf.to_csv(os.path.join(animalDirPath, key + '_trim_rest_phases.csv'))
-
-        # Pruned data - removes just the starting rests if exist
-        allPrunedDf = animalDict[key][6]
-        prunedRunsDf = animalDict[key][7]
-        prunedRestsDf = animalDict[key][8]
-
-        allPrunedDf.to_csv(os.path.join(animalDirPath, key + '_pruned_sessions.csv'))
-        prunedRunsDf.to_csv(os.path.join(animalDirPath, key + '_pruned_run_phases.csv'))
-        prunedRestsDf.to_csv(os.path.join(animalDirPath, key + '_pruned_rest_phases.csv'))
-
-        # Survival dataframe - created originally for making survival curves
-        # but a useful format
-        survivalDf = animalDict[key][9]
-
-        survivalDf.to_csv(os.path.join(animalDirPath, key + '_survival_dataframe.csv'))
+    print '\nExporting results to CSV...'
+    for animalName, sessionDf in sessionDict.iteritems():
+        print "Outputting session data for: ", animalName
+        sessionDf.to_csv(os.path.join(newDirPath, animalName + '_sessions.csv'))
         # Output a readme explaination maybe?
+    print '**Done**.'
 
 def checkInputFile(inputFileArg):
     """Make sure the file exists"""
     if not os.path.exists(inputFileArg):
-        print "Input fasta file not found. Check path."
+        print "{0} not found. Check path.".format(inputFileArg)
         sys.exit(1)
 
-def checkFileHeader(readerObj, HEADER_STRING):
+def checkAscFileHeader(readerObj, HEADER_STRING):
     """Function to check the file's header."""
     #Move to the next (first) row of data and assign it to a variable
     firstHeader = readerObj.next()
@@ -448,12 +374,11 @@ def checkFileHeader(readerObj, HEADER_STRING):
         return firstHeader 
     except AttributeError:
         print "ERROR: This file is in the wrong format or is the wrong file type."
-        sys.exit(0) # quit the program
+        sys.exit(1) # quit the program
 
 
 def checkSampleHeader(SAMPLE_NAME_REGEXP, rowOfData):
-    """Function to check the second header and formats header for distance csv
-    Returns raw header and reformatted header"""
+    """Function to check the second header"""
     rowLength = len(rowOfData)
 
     # Use the modulo (%) operator which yeilds remainder after dividing by a
@@ -461,36 +386,19 @@ def checkSampleHeader(SAMPLE_NAME_REGEXP, rowOfData):
     # Else, reformat the header and return formated one
     if rowLength % 3 != 0:
         print "ERROR: Sample data are not in triplicate columns."
-        sys.exit(0) # quit the program
-    else:
-        # For distance file, reformat header
-        distHeaderRow = ["Date", "Time"]
+        sys.exit(1) # quit the program
 
-        # Loop through the columns of data starting at col 3, until end. Step 3
-        # at a time to get col containing Turn Data for each sample only.
-        # Remember python lists start at 0, 1, 2, ...
-        # I reformat the column order here to remove duplicate time and dates
-        # and add a meters per minute one.
-        for i in xrange(2, rowLength, 3):
-            sampleHeader = rowOfData[i]
-
-            # Add the Turns Data sample header as is to the row
-            #distHeaderRow.append(sampleHeader)
-
-            # Capture the sample name (without 'Turn Data')
-            searchObj = re.search(SAMPLE_NAME_REGEXP, sampleHeader)
-            searchResult = searchObj.group(1)
-
-            # Append meters/min to end of name
-            sampleDistHeader = searchResult + ' meters/min'
-
-            # Add this new meters/min sample header as a new column
-            distHeaderRow.append(sampleDistHeader)
-        # Return True for header checked, and the newly created header
-        return distHeaderRow
-
+def checkCsvHeader(user_input):
+    with open(user_input, 'rb') as csvFile:
+    # Turns the open file into an object we can use to pull data from
+        fileReader = csv.reader(csvFile, delimiter=",", quotechar='"')
+        header = fileReader.next()
+        if len(header) % 3 != 0:
+            print "ERROR: Data are not in triplicate columns. Check file."
+            sys.exit(1) # quit the program
+        
 def getFilenameInfo(FILE_NAME_REGEXP, user_args_input):
-    """Function to get dirpath, the whole filename and the filename without the .asc"""
+    """Function to split the filename and extension and return both."""
     
     # get filename from first command line argument
     # fileDir, wholeFileName = os.path.split(user_args_input)
@@ -499,14 +407,74 @@ def getFilenameInfo(FILE_NAME_REGEXP, user_args_input):
     # Use a regular expression to match the filename
     nameSearchObj = re.search(FILE_NAME_REGEXP, wholeFileName)
 
-    # Capture part without extension. Notice FILE_NAME_REGEXP in parentheses
-    # is inside group(1). If there was another pair of () it would be group(2)
+    # Capture name without extension. 
     fileNameNoExtension = nameSearchObj.group(1)
 
-    # return information file name without extension (e.g. '.csv', '.asc')
-    return  fileNameNoExtension #, wholeFileName, fileDir  # Don't need
+    # Grab file extension to determine if .asc or .csv
+    fileExtension = nameSearchObj.group(2)
 
-def parseInput():
+    # return information file name without extension (e.g. '.csv', '.asc')
+    return  fileNameNoExtension, fileExtension #, wholeFileName, fileDir
+
+def parse_asc(user_input):
+    """Function to take asc file and split the animal summary and actual data
+    into two files. Returns the raw csv name."""
+
+    with open(user_input, 'rb') as csvFile:
+    # Turns the open file into an object we can use to pull data from
+        fileReader = csv.reader(csvFile, delimiter=",", quotechar='"')
+        
+        # Check first file header and assign to variable
+        fileHeader = checkAscFileHeader(fileReader, HEADER_STRING)
+
+        miceCsvName = cohortName + '_asc_summary.csv'
+        rawCsvName = cohortName + '_asc_rawdata.csv'
+
+        # Create a mice data csv file
+        with open(miceCsvName, 'wb') as miceOutFile:
+            miceFileWriter = csv.writer(miceOutFile)
+
+            # Create a raw data csv file
+            with open(rawCsvName, 'wb') as rawOutFile:
+                rawFileWriter = csv.writer(rawOutFile)
+
+                # First time around?
+                firstRowOfFile = True
+
+                # Make sure to check the data header too
+                checkedSampleHeader = False
+
+                # Iterate through every line (row) of the original file
+                for row in fileReader:
+                    # Put all mouse summary data into the mice sheet, data
+                    # should be in less than 3 columns
+                    if len(row) < 3:
+                        # If very first row, place the checked header
+                        if firstRowOfFile:
+                            miceFileWriter.writerow(fileHeader)
+                            # Next round, set to false to skip this part
+                            firstRowOfFile = False
+                        # For the rest of the rows, just dump
+                        miceFileWriter.writerow(row)
+                
+                    # Real data should have at least 3 columns
+                    else:
+                        # Check second header, is it a multiple of 3?
+                        if not checkedSampleHeader:
+                            checkSampleHeader(SAMPLE_NAME_REGEXP, row)
+                            checkedSampleHeader = True           
+                            
+                            # Raw data file takes header row as is
+                            rawFileWriter.writerow(row)
+
+                            print "\n**The file is in the correct format.**"
+
+                        # Once the header is good
+                        else:
+                            rawFileWriter.writerow(row)
+    return rawCsvName
+
+def parseUserInput():
     """Use argparse to handle user input for program"""
     
     # Create a parser object
@@ -517,26 +485,27 @@ def parseInput():
         output into a ASCII file directly obtained from the Vitalview Software. 
         The input file should have two headers. The first will be the the over 
         all file header that says 'Experiment Logfile:' followed by the date. 
-        Second, the data header below in comma delimited format (csv)""",
+        Second, the data header below in comma delimited format (csv)
+
+        Option to use with csv files that have the mouse summary data removed.
+        However, the data must still be in triplicate columns.""",
 
         epilog=textwrap.dedent("""\
         The script will output a csv file for each of the following:
-            1) Mice data - summary statistics
-            2) Raw data - unmanipulated
-            3) Distance calculated - converted turns to meters
-            4) Time Filtered - includes data > 18:01:00 of day 1 to 06:00:00 of day 3
-            5) Sum Hourly - minute data is summed into hours per row
-            6) Cumulative - data from each hour is compounded onto the previous"""))
-    
+            1) Animal data   <cohort_name>_asc_summary.csv
+            2) Raw data      <cohort_name>_asc_rawdata.csv
+            3) Formatted     <cohort_name>_formatted.csv
+            4) Sessions      <animal>_sessions.csv"""))
+
     parser.add_argument("input",
-        help="File name and/or path to experiment_file.asc")
+        help="File name and/or path to experiment_file.asc or .csv")
     
     parser.add_argument("-v", "--version", action="version",
                         version=textwrap.dedent("""\
         %(prog)s
         -----------------------   
-        Version:    0.2 
-        Updated:    01/26/2015
+        Version:    0.3
+        Updated:    05/03/2016
         By:         Prech Uapinyoying   
         Website:    https://github.com/puapinyoying"""))
 
@@ -544,19 +513,35 @@ def parseInput():
     
     return args
 
-
-user_args = parseInput()
+# Grab parsed user input.
+user_args = parseUserInput()
 
 if user_args.input:
-    cohortName = getFilenameInfo(FILE_NAME_REGEXP, user_args.input)
-    # Read in running wheel data
 
-    rawDf = pd.read_csv(user_args.input)
+    # Start with sanity checks
+    checkInputFile(user_args.input) # Does file exist? If no, exit and warn.
 
-    ftDf, nullRows = formatRawDf(rawDf)
+    # Next grab the file name to use as cohort and file extension
+    cohortName, fileExtension = getFilenameInfo(FILE_NAME_REGEXP, user_args.input)
+    
+    if fileExtension == 'asc':
+        rawCsvName = parse_asc(user_args.input)
+        rawDf = pd.read_csv(rawCsvName)
 
-    sDf = calcSessions(ftDf)
+    elif fileExtension == 'csv':
+        checkCsvHeader(user_args.input)
+        rawDf = pd.read_csv(user_args.input)
 
-    dataDict = parsePhase(sDf)
+    else:
+        print "This program only excepts the raw '.asc' file or '.csv' files."
+        sys.exit(1)
 
-    outputAllToFile(rawDf, ftDf, nullRows, dataDict, cohortName)
+    # Start doing some calculations and creating dataframes
+    formattedDf, nullRows = formatRawDf(rawDf)
+    sessionsDict = calcSessions(formattedDf)
+    reformattedDict = reformatSessions(sessionsDict)
+    percentRunRestDf = calcPercentRunRest(reformattedDict)
+
+    # Dump csvs into folders
+    outputAllToFile(rawDf, formattedDf, percentRunRestDf, nullRows, 
+        reformattedDict, cohortName)

@@ -12,10 +12,10 @@ from openpyxl import load_workbook # for loading excel files
 # If no arguments are entered...
 USAGE = '''\n***parseRunningWheelAsc.py script - by Prech Brian Uapinyoying***\n
 Parses mouse running wheel data that has been output into a ASCII file
-directly obtained from the Vitalview Software.  The input file should have two 
-headers. The first will be the the over all file header that says 'Experiment 
-Logfile:' followed by the date. Second, the data header below in comma 
-delimited format (csv).
+directly obtained from the computer.  The input file should have two headers. 
+The first will be the the over all file header that says 'Experiment Logfile:' 
+followed by the date. Second, the data header below in comma delimited format 
+(csv).
 
 The script will output a csv file for each of the following:
 1) Mice data - summary statistics
@@ -35,11 +35,11 @@ SAMPLE_NAME_REGEXP = r'([\w \/]+) Turns Data'
 FILE_NAME_REGEXP = r'(.+)\..+'
 HEADER_STRING = 'Experiment Logfile:'
 
-### Here lie the functions or reusable chunks of code.
+### Here lie the functions or mini-programs that I wrote that can be reused
 ### it also helps keep the code a bit cleaner in the main body below
 
+# Function to get the whole file name and the filename without the .asc
 def get_file_name(FILE_NAME_REGEXP):
-    """Function to get the whole file name and the filename without the .asc"""
     wholeFileName = sys.argv[1] # get filename from first command line argument
     
     # Use a regular expression to match the filename
@@ -50,10 +50,9 @@ def get_file_name(FILE_NAME_REGEXP):
     fileNameNoExtension = nameSearchObj.group(1)
     return wholeFileName, fileNameNoExtension # return information in a pair
 
-
-def check_fileHeader(readerObj, HEADER_STRING):
-    """Function to check the file's header."""
-    #Move to the next (first) row of data and assign it to a variable
+# Function to check first header
+def check_header1(readerObj, HEADER_STRING):
+    # Move to the next (first) row of data and assign it to a variable
     firstHeader = readerObj.next()
 
     # Try a search and find on the header row to match HEADER_STRING. If return
@@ -66,10 +65,9 @@ def check_fileHeader(readerObj, HEADER_STRING):
         print "ERROR: This file is in the wrong format or is the wrong file type."
         sys.exit(0) # quit the program
 
-
-def check_sampleHeader(SAMPLE_NAME_REGEXP, rowOfData):
-    """Function to check the second header and formats header for distance csv
-    Returns raw header and reformatted header"""
+# Function to check the second header and formats header for distance csv
+# Returns raw header and reformatted header
+def check_header2(SAMPLE_NAME_REGEXP, rowOfData):
     rowLength = len(rowOfData)
 
     # Use the modulo (%) operator which yeilds remainder after dividing by a
@@ -91,7 +89,7 @@ def check_sampleHeader(SAMPLE_NAME_REGEXP, rowOfData):
             sampleHeader = rowOfData[i]
 
             # Add the Turns Data sample header as is to the row
-            #distHeaderRow.append(sampleHeader)
+            distHeaderRow.append(sampleHeader)
 
             # Capture the sample name (without 'Turn Data')
             searchObj = re.search(SAMPLE_NAME_REGEXP, sampleHeader)
@@ -105,12 +103,10 @@ def check_sampleHeader(SAMPLE_NAME_REGEXP, rowOfData):
         # Return True for header checked, and the newly created header
         return distHeaderRow
 
-
+# Takes a list of lists (sample data arranged longitudinally), each sublist 
+# starts with a header. Converts it to column format (vertical arrangement)
+# to make it easy to print
 def fill_transpose(listOfStreaks):
-    """ Takes a list of lists (sample data arranged longitudinally), each sublist 
-    starts with a header. Converts it to column format (vertical arrangement)
-    to make it easy to print"""
-
     # Find length of longest sublist
     listLen = len(listOfStreaks)
     maxSubLen = 0
@@ -143,6 +139,7 @@ def fill_transpose(listOfStreaks):
             transposedList[i].append('')
 
     # Now transfer data from listOfStreaks to new transposedList in right order
+    
     for x in range(0, listLen):
         for y in range(0, len(listOfStreaks[x])):
             transposedList[y][x] = listOfStreaks[x][y]
@@ -174,7 +171,7 @@ if numArgs == 2:
         originalFileReader = csv.reader(csvFile, delimiter=",", quotechar='"')
 
         # Check first file header and assign to variable
-        fileHeader = check_fileHeader(originalFileReader, HEADER_STRING)
+        fileHeader = check_header1(originalFileReader, HEADER_STRING)
 
         # Create a mice data csv file
         with open(miceCsvName, 'wb') as miceOutFile:
@@ -192,7 +189,7 @@ if numArgs == 2:
                     firstRowOfFile = True
 
                     # Make sure to check the data header too
-                    checkedSampleHeader = False
+                    checkedHeader2 = False
 
                     # Iterate through every line (row) of the original file
                     for row in originalFileReader:
@@ -210,11 +207,11 @@ if numArgs == 2:
                         # Real data should have at least 3 columns
                         else:
                             # Check second header, is it a multiple of 3?
-                            if not checkedSampleHeader:
-                                distHeader = check_sampleHeader(
+                            if not checkedHeader2:
+                                distHeader = check_header2(
                                     SAMPLE_NAME_REGEXP, row)
 
-                                checkedSampleHeader = True
+                                checkedHeader2 = True
                                 
                                 # Raw data file takes header row as is
                                 rawFileWriter.writerow(row)
@@ -231,7 +228,7 @@ if numArgs == 2:
                                 distanceRow = [row[0], row[1]]
                                 for i in xrange(2, len(row), 3):
                                     sampleData = row[i]
-                                    #distanceRow.append(sampleData)
+                                    distanceRow.append(sampleData)
                                     meterData = float(sampleData) * 0.361
                                     distanceRow.append(meterData)
                                 distFileWriter.writerow(distanceRow)
@@ -313,17 +310,11 @@ if numArgs == 2:
                             listOfStreaks.append([])
                             t += 1
 
-################################################################################
-######################### Set Time Filter Here #################################
-################################################################################
-                        # Set our filter criteria, start after 6pm day 1, end at 6am day 3
-
-                        # current setting chooses start date as first day, but it can be
-                        # changed to a litteral date e.g. distRow1[0] --> '01/31/15'
+                        # Set our filter criteria, start after 6pm day 1
+                        # end at 6am day 3
                         startDateTimeString = '%s %s' % (distRow1[0], '18:00:00')
                         startDateTime = datetime.strptime(startDateTimeString, '%m/%d/%y %H:%M:%S')
                         endDateTime = startDateTime + timedelta(days=3) - timedelta(hours=12)
-################################################################################
 
                         hourNum = 1
                         distRowNum = 1

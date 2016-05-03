@@ -111,8 +111,3 @@ target/
 *.asc
 *.csv
 *.xlsx
-
-# Jupyter notebook
-##################
-*.ipynb
-.ipynb_checkpoints
