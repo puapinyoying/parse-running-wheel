@@ -1,20 +1,21 @@
 #! /usr/bin/env python
 
 # Import libraries for data analysis
-
+from __future__ import division
 import re
 import os
 import csv
 import sys
-import tqdm
+#import tqdm
 import argparse
+#import openpyxl
 import textwrap
 import numpy as np
 import pandas as pd
 from datetime import datetime
 from pandas import Series, DataFrame
-#import matplotlib as plt
-#from matplotlib.backends.backend_pdf import PdfPages
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_pdf import PdfPages
 
 # Regular Expressions and static (unchanging) variables 
 SAMPLE_NAME_REGEXP = r'([\w \/\)\(\-\.\|]+) Turns Data'
@@ -73,7 +74,7 @@ def formatRawDf(rawDf):
     colNames = df2.columns
 
     # Create a regular expression formula
-    REG_EXP = r'^([\w\/\s\-]+) Turns Data'
+    REG_EXP = r'^([\w\/\s\-\+]+) Turns Data'
 
     sampleName = re.search(REG_EXP, colNames[0])
 
@@ -85,15 +86,44 @@ def formatRawDf(rawDf):
 
     for name in colNames:
         temp = re.search(REG_EXP, name)
-        newName = temp.group(1)
-        cleanName = re.sub(r'[\/\+\s\.]', r'_', newName)
-        newColNames.append(cleanName)
+        origName = temp.group(1)
+        noSpaceName = re.sub(r'[\/\s\.]', r'_', origName)
+        rmPlusSign = re.sub(r'[\+]', r'_plus_', noSpaceName)
+        newColNames.append(rmPlusSign)
 
     df2.columns = newColNames # Sub the old column names for the new ones
     df2.columns.name = 'condition'  # got erased, add back
     df2.index.name = 'date_time'
 
     return df2, nullRows  # returns formatted df and num of rows with null vals
+
+def formatHourlyCumSum(df):
+    hourlyDf = df.resample('H')
+    hourlyCumSumDf = hourlyDf.cumsum()
+
+    return hourlyDf, hourlyCumSumDf
+
+def calcSumDistPerDay(df):
+    t = formattedDf.index # Get timeseries index
+    t2 = Series(t) # convert to series
+    uniqueDates = t2.map(pd.Timestamp.date).unique() # get unique dates only
+
+    uniqueList = []
+
+    # For each datetime object in unique dates, convert to strings so we can
+    # use them as dataframe indexes
+    for date in uniqueDates:
+        uniqueList.append(date.strftime('%Y-%m-%d'))
+
+    dateDict = {} # New dictionary for dataframe
+
+    for date in uniqueList:
+        # Grab matching data, take sum and place in new dictionary
+        dateDict[date] = formattedDf[date].sum()
+
+    daySumDf = DataFrame(dateDict) # Turn into dataframe
+
+    return daySumDf
 
 def calcSessions(df):
     """Calculates running session data. Each session consists of a run phase
@@ -307,28 +337,113 @@ def calcPercentRunRest(sessionDict):
         sumDistRun = df['run_dist(m)'].sum()
         sumMinsRest = df.rest_mins.sum()
         sumTotal = sumMinsRun + sumMinsRest
-        percentRun = (sumMinsRun / sumTotal) * 100
-        percentRest = (sumMinsRest / sumTotal) * 100
 
         # Create a dictionary for each row to be in the dataframe
         rowDict = {'animal':animalName, 'sum_mins_run':sumMinsRun, 
                     'sum_mins_rest':sumMinsRest, 'sum_dist_run(m)':sumDistRun,
-                    'total_mins':sumTotal, 'percent_run':percentRun, 
-                    'percent_rest':percentRest}
+                    'total_mins':sumTotal}
 
         dictList.append(rowDict) # Add to the dictionary list
 
-    # When done, create the dataframe and return it.
-    percentRunRestDf = DataFrame(dictList)
+    # Create dataframe
+    df2 = DataFrame(dictList)
+
+    # Calculate percent data columns
+    percentRun =  (df2.sum_mins_run / df2.total_mins) * 100
+    percentRest = (df2.sum_mins_rest / df2.total_mins) * 100
+
+    rPercentRun = percentRun.round(2)
+    rPercentRest = percentRest.round(2)
+
+    df2.index.name = 'index' # Add header names to the columns
+    rPercentRun.name = 'percent_mins_run'
+    rPercentRest.name = 'percent_mins_rest'
+
+    joinedDf = pd.concat([df2, rPercentRun, rPercentRest], axis=1) # join cols
+
+    colOrder = ['animal','sum_mins_run', 'sum_dist_run(m)', 'sum_mins_rest',
+                'total_mins', 'percent_mins_run', 'percent_mins_rest']
+
+    percentRunRestDf = joinedDf[colOrder] # Final order of columns
 
     return percentRunRestDf
 
 
 
 ###########################################################################
-### Section below contains functions for input/output and parsing files ###
+### Section below contains functions for input/output, graphing and     ###
+### parsing files                                                       ###
 ###########################################################################
 
+def chunkLists(userList, chunkSize):
+    """Use to split lists of columns into chunks of sublists for graphing"""
+    chunkList = []
+
+    # x goes from start of list to end in groups of chunkSize
+    for x in xrange(0, len(userList), chunkSize):
+        # Eg. If chunkSize = 6:
+        # first loop: start = 0 and end = 6
+        # second loop: start = 6 and end = 12
+        # third loop: start = 12 end = 18 etc.
+        chunk=userList[x:x+chunkSize]
+        chunkList.append(chunk)
+    return chunkList
+
+def plotGraphs(formattedDf, percentRunRestDf, newDirPath, cohortName):
+    """Make some plots"""
+    hourlyDf, hourlyCumSumDf = formatHourlyCumSum(formattedDf)
+    daySumDf = calcSumDistPerDay(formattedDf)
+
+    with PdfPages(os.path.join(newDirPath, cohortName + '_graphs.pdf')) as pdf:
+        # Barplot of daily distance sums
+        b = daySumDf.plot(kind='bar',figsize=(10,5), width=0.75, alpha=.75) #color=['#FFAAAA','#D46A6A','#801515','#550000'])
+        b.set_title('{0}: Total Running Distance By Day'.format(cohortName), y=1.08)
+        b.set_ylabel('Distance in meters')
+        b.set_xlabel('Animal & Condition')
+        b.legend(bbox_to_anchor=(1.12, 0.6),prop={'size':6})
+        pdf.savefig(bbox_inches='tight')
+        plt.clf()
+
+        # Stacked Barplot of % rest and run
+        pnames = percentRunRestDf.animal
+        pruns = percentRunRestDf.percent_mins_run
+        prests = percentRunRestDf.percent_mins_rest
+        px = range(len(pnames)) # xaxis must be numbers, we can change to names with xticks
+        width =0.50 # of bars, must be a fraction
+        b1 = plt.bar(px, pruns, width, color='black')
+        b2 = plt.bar(px, prests, width, color='lightgrey',bottom=pruns)
+        # xticks takes original xaxis (px), and replacement (pnames)
+        plt.xticks(px, pnames, size='small', rotation=90, horizontalalignment='left')
+        plt.title('Percent Run and Percent Rest Per Animal', y=1.08)
+        plt.legend((b1[0], b2[0]), ('Run', 'Rest'), bbox_to_anchor=(1.15, 1.01),prop={'size':10})
+        plt.ylabel('Percent %')
+        plt.xlabel('Animal & Condition')
+        pdf.savefig(bbox_inches='tight')
+        plt.clf()
+
+        # Cumsum Line plot
+        chunks = chunkLists(hourlyDf.columns, 6)
+        for i, c in enumerate(chunks):
+            l = hourlyDf[chunks[i]].cumsum().plot(figsize=(7, 7), linewidth=3, alpha=0.70)
+            l.set_title('{0}: Cumilative Sum Plot Binned By Hour (plot {1} of {2})'.format(
+                cohortName, i+1, len(chunks)), y=1.08)
+            l.set_ylabel('Distance in meters)')
+            l.set_xlabel('Date & Time')
+            l.legend(bbox_to_anchor=(1.38, 1.01),prop={'size':8})
+            pdf.savefig(bbox_inches='tight')
+            plt.clf()
+
+        # Distance Histogram - Line plot
+        chunks2 = chunkLists(hourlyDf.columns, 3)
+        for i, c in enumerate(chunks2):   
+            h = hourlyDf[chunks2[i]].plot(figsize=(15, 3), linewidth=3, alpha=0.65)
+            h.set_title('{0}: Distance Histogram Binned By Hour (plot {1} of {2})'.format(
+                cohortName, i+1, len(chunks2)), y=1.08)
+            h.set_ylabel('Distance in meters')
+            h.set_xlabel('Date & Time')
+            h.legend(bbox_to_anchor=(1.18, 1.01), prop={'size':8})
+            pdf.savefig(bbox_inches='tight')
+            plt.clf()
 
 def outputAllToFile(rawDf, formattedDf, percentRunRestDf, nullRows, sessionDict,
                         cohortName):
@@ -342,17 +457,35 @@ def outputAllToFile(rawDf, formattedDf, percentRunRestDf, nullRows, sessionDict,
         os.makedirs(newDirPath)
 
     # output main formatted data frame
+    print '\nExporting results to CSV...'
+    print "Outputting raw dataframe"
     rawDf.to_csv(os.path.join(newDirPath, cohortName +'_rawdata.csv'))
+    print "Outputting number of null rows."
     nullRows.to_csv(os.path.join(newDirPath, cohortName +'_num_null.csv'))
+    print "Outputting formatted dataframe."
     formattedDf.to_csv(os.path.join(newDirPath, cohortName +'_formatted.csv'))
+    print "Outputting calculated percent run and rest."
     percentRunRestDf.to_csv(os.path.join(newDirPath, cohortName + '_percentRunRest.csv'))
 
+    hourlyDf, hourlyCumSumDf = formatHourlyCumSum(formattedDf)
+    daySumDf = calcSumDistPerDay(formattedDf)
+
+    print "Outputting data binned by the hour."
+    hourlyDf.to_csv(os.path.join(newDirPath, cohortName +'_bin_by_hour.csv'))
+    print "Outputting cumilative sum data by the hour."
+    hourlyCumSumDf.to_csv(os.path.join(newDirPath, cohortName +'_cumsum_by_hour.csv'))
+    print "Outputting data for total distance per day"
+    daySumDf.to_csv(os.path.join(newDirPath, cohortName +'_sum_dist_by_day.csv'))
+    # Output the plots
     # Output session data frames
     print '\nExporting results to CSV...'
     for animalName, sessionDf in sessionDict.iteritems():
         print "Outputting session data for: ", animalName
         sessionDf.to_csv(os.path.join(newDirPath, animalName + '_sessions.csv'))
         # Output a readme explaination maybe?
+
+    print '\nMaking plots...'
+    plotGraphs(formattedDf, percentRunRestDf, newDirPath, cohortName)
     print '**Done**.'
 
 def checkInputFile(inputFileArg):
@@ -492,10 +625,21 @@ def parseUserInput():
 
         epilog=textwrap.dedent("""\
         The script will output a csv file for each of the following:
-            1) Animal data   <cohort_name>_asc_summary.csv
-            2) Raw data      <cohort_name>_asc_rawdata.csv
-            3) Formatted     <cohort_name>_formatted.csv
-            4) Sessions      <animal>_sessions.csv"""))
+            1) Animal data            <cohort_name>_asc_summary.csv
+            2) Raw data               <cohort_name>_asc_rawdata.csv
+            3) Formatted              <cohort_name>_formatted.csv
+            4) Bin by hr              <cohort_name>_bin_by_hour.csv
+            5) Cumilative sum by hr   <cohort_name>_cumsum_by_hour.csv
+            6) Sum distance by day    <cohort_name>_sum_dist_by_day.csv
+            7) Sessions               <animal>_sessions.csv
+            8) Percent Run & rest     <cohort_name>_percentRunRest.csv
+            9) Graphs                 <cohort_name>_graphs.pdf
+          
+        The pdf of graphs contain plots for:
+            - Total Running Distance By Day
+            - Percent Run and Percent Rest Per Animal
+            - Cumulative Sum Plot Binned By Hour
+            - Distance Histogram Binned By Hour"""))
 
     parser.add_argument("input",
         help="File name and/or path to experiment_file.asc or .csv")
@@ -504,7 +648,7 @@ def parseUserInput():
                         version=textwrap.dedent("""\
         %(prog)s
         -----------------------   
-        Version:    0.3
+        Version:    0.4
         Updated:    05/03/2016
         By:         Prech Uapinyoying   
         Website:    https://github.com/puapinyoying"""))

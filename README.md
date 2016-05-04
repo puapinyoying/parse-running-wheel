@@ -1,16 +1,16 @@
 # parse-running-wheel
 
-### sessions.py - version 0.3
+### sessions.py - version 0.4
 Script to parse VitalView mouse volunary running wheel data and calculate running sessions (run phase followed by a rest phase) for each animal.
 
 ---
 
 ### Requires: 
 - python 2.7
-- tqdm
 - argparse
 - numpy
 - pandas
+- matplotlib
 
 ---
 
@@ -29,19 +29,28 @@ Option to use with csv files that have the mouse summary data removed. However, 
 
 **The script will output a csv file for each of the following**:
 
-1. Animal data   <cohort_name>_asc_summary.csv
-2. Raw data      <cohort_name>_asc_rawdata.csv
-3. Formatted     <cohort_name>_formatted.csv
-4. Sessions      <animal>_sessions.csv
+1. Animal data              <cohort_name>_asc_summary.csv
+2. Raw data                 <cohort_name>_asc_rawdata.csv
+3. Formatted                <cohort_name>_formatted.csv
+4. Bin by hour              <cohort_name>_bin_by_hour.csv
+5. Cumulative sum by hr     <cohort_name>_cumsum_by_hour.csv
+6. Sum distance by day      <cohort_name>_sum_dist_by_day.csv
+7. Sessions                 <animal>_sessions.csv
+8. Percent Run & rest       <cohort_name>_percentRunRest.csv
+9. Graphs                   <cohort_name>_graphs.pdf
+
+The pdf of graphs contains
+- Total Running Distance By Day
+- Percent Run and Percent Rest Per Animal
+- Cumilative Sum Plot Binned By Hour
+- Distance Histogram Binned By Hour
 
 ---
 
 ### Future additions
-- Time Filtered - includes data > 18:01:00 of day 1 to 06:00:00 of day 3
-- Sum Hourly - minute data is summed into hours per row
-- Cumulative - data from each hour is compounded onto the previous"""))
+- Filter by time
 
 ---
 
 ### parseRunningWheelAsc.py 
-Depreciated version. Can output hourly sum and cumilative sum but no session data.  Also does not use pandas. 
+Depreciated version.
