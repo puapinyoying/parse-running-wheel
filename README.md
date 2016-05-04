@@ -9,8 +9,11 @@ Script to parse VitalView mouse volunary running wheel data and calculate runnin
 - python 2.7
 - argparse
 - numpy
-- pandas
+- pandas* v0.17.1
 - matplotlib
+
+*Currently program breaks with version 0.18. Please use pandas version v0.17.1 for now*
+
 
 ---
 
@@ -49,6 +52,7 @@ The pdf of graphs contains
 
 ### Future additions
 - Filter by time
+- Fix bugs with pandas v0.18
 
 ---
 
