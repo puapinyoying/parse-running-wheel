@@ -1,6 +1,6 @@
 # parse-running-wheel
 
-### sessions.py - version 0.4
+### sessions.py - version 0.4.1
 Script to parse VitalView mouse volunary running wheel data and calculate running sessions (run phase followed by a rest phase) for each animal.
 
 ---

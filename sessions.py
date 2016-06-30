@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
 # Regular Expressions and static (unchanging) variables 
-SAMPLE_NAME_REGEXP = r'([\w \/\)\(\-\.\|]+) Turns Data'
+SAMPLE_NAME_REGEXP = r'([\w \/\)\(\-\^\.\|]+) Turns Data'
 FILE_NAME_REGEXP = r'(.+)\.(.+)'
 HEADER_STRING = 'Experiment Logfile:'
 
@@ -74,7 +74,7 @@ def formatRawDf(rawDf):
     colNames = df2.columns
 
     # Create a regular expression formula
-    REG_EXP = r'^([\w\/\s\-\+]+) Turns Data'
+    REG_EXP = r'^([\w\/\s\^\-\+]+) Turns Data'
 
     sampleName = re.search(REG_EXP, colNames[0])
 
@@ -89,7 +89,8 @@ def formatRawDf(rawDf):
         origName = temp.group(1)
         noSpaceName = re.sub(r'[\/\s\.]', r'_', origName)
         rmPlusSign = re.sub(r'[\+]', r'_plus_', noSpaceName)
-        newColNames.append(rmPlusSign)
+        rmCarrot = re.sub(r'[\^]', r'_power_', rmPlusSign)
+        newColNames.append(rmCarrot)
 
     df2.columns = newColNames # Sub the old column names for the new ones
     df2.columns.name = 'condition'  # got erased, add back
@@ -522,7 +523,7 @@ def checkSampleHeader(SAMPLE_NAME_REGEXP, rowOfData):
         sys.exit(1) # quit the program
 
 def checkCsvHeader(user_input):
-    with open(user_input, 'rb') as csvFile:
+    with open(user_input, 'rU') as csvFile:
     # Turns the open file into an object we can use to pull data from
         fileReader = csv.reader(csvFile, delimiter=",", quotechar='"')
         header = fileReader.next()
@@ -553,7 +554,7 @@ def parse_asc(user_input):
     """Function to take asc file and split the animal summary and actual data
     into two files. Returns the raw csv name."""
 
-    with open(user_input, 'rb') as csvFile:
+    with open(user_input, 'rU') as csvFile:
     # Turns the open file into an object we can use to pull data from
         fileReader = csv.reader(csvFile, delimiter=",", quotechar='"')
         
@@ -648,9 +649,9 @@ def parseUserInput():
                         version=textwrap.dedent("""\
         %(prog)s
         -----------------------   
-        Version:    0.4
-        Updated:    05/03/2016
-        By:         Prech Uapinyoying   
+        Version:    0.4.1
+        Updated:    06/30/2016
+        By:         Prech Uapinyoying
         Website:    https://github.com/puapinyoying"""))
 
     args = parser.parse_args()
