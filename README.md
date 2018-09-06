@@ -49,29 +49,32 @@ sessions.py [-h] [-v] input
 The program takes '.csv' data output from the Vitalview Software. The input file should have three levels of headers. From top to bottom. The header needs to be 'Channel Name:','Channel Group:' and 'Sensor Type:' 
 
 **positional arguments**:
-  input          File name and/or path to experiment_file.asc or .csv
-
+```bash
+input          		File name and/or path to experiment_file.asc or .csv
+```
 **optional arguments**:
-  -S, --customStart		start at 'month/day/yeah hour:min' (e.g. 9/5/2018 15:35)
-  -E, --customEnd		end at 'month/day/yeah hour:min' (e.g. 9/7/2018 13:35)
-  -H, --customGrpByHr	group data by specified number of hours, can specify argument multiple times
-  -h, --help     		show this help message and exit
-  -v, --version  		show program's version number and exit
+```bash
+-S, --customStart	start at 'month/day/yeah hour:min' (e.g. 9/5/2018 15:35)
+-E, --customEnd		end at 'month/day/yeah hour:min' (e.g. 9/7/2018 13:35)
+-H, --customGrpByHr	group data by specified number of hours, can specify argument multiple times
+-h, --help     		show this help message and exit
+-v, --version  		show program's version number and exit
+```
 
 **The script will output a csv file for each of the following**:
 
 | Data | Details | Output Filename |
 | ---- | ------- | --------------- |
-1. Raw data            | A copy of the raw data table | cohort_name_rawdata.csv
-2. Formatted turns     | Dataframe with formated headers and indexes, displays wheel turns data| cohort_name_formatted_turns.csv
-3. Formatted distance  | Same as above, but data converted to meters (turns * 0.361) | cohort_name_formatted_distance.csv
-4. Selected distance   | User selected time window of data defined by '-S' and '-E' arguments (subsequently used for the rest of the calculations), if custom start and end times were given | cohort_name_selected_distance.csv
-5. Bin by hr           | Distance data grouped by hour | cohort_name_bin_by_hour.csv
-6. Bin by days         | Distance data grouped by day| cohort_name_bin_by_day.csv
-7. Bin by <X> hrs      | Custom groupings by X hours, defined by -H argument | cohort_name_bin_by_<user_defined_hours>H.csv
-8. Sessions            | Run and rest sessions for each individual animal put into the animal_sessions folder | animalName_group_sessions.csv
-9. Percent Run & rest  | Calculate the percentages of each run vs rest for sessions | cohort_name_percentRunRest.csv
-10. Graphs             | See below | cohort_name_graphs.pdf
+| Raw data | A copy of the raw data table | cohort_name_rawdata.csv |
+| Formatted turns | Dataframe with formated headers and indexes, displays wheel turns data| cohort_name_formatted_turns.csv |
+| Formatted distance | Same as above, but data converted to meters (turns * 0.361) | cohort_name_formatted_distance.csv |
+| Selected distance | User selected time window of data defined by '-S' and '-E' arguments (subsequently used for the rest of the calculations), if custom start and end times were given | cohort_name_selected_distance.csv |
+| Bin by hr | Distance data grouped by hour | cohort_name_bin_by_hour.csv |
+| Bin by days | Distance data grouped by day| cohort_name_bin_by_day.csv |
+| Bin by <X> hrs | Custom groupings by X hours, defined by -H argument | cohort_name_bin_by_<user_defined_hours>H.csv |
+| Sessions | Run and rest sessions for each individual animal put into the animal_sessions folder | animalName_group_sessions.csv |
+| Percent Run & rest | Calculate the percentages of each run vs rest for sessions | cohort_name_percentRunRest.csv |
+| Graphs | See below | cohort_name_graphs.pdf |
   
 The pdf of graphs contains:
 
