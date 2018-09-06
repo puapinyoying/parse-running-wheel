@@ -83,6 +83,8 @@ The pdf of graphs contains:
 - Cumilative Sum Plot Binned By Hour
 - Distance Histogram Binned By Hour
 
+---
+
 ### Example command:
 
 ```bash
