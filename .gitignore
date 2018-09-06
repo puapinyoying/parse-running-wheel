@@ -109,7 +109,7 @@ target/
 # Data files
 ############
 *.asc
-*.csv
+#*.csv
 *.xlsx
 
 # Jupyter notebook

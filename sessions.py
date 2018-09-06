@@ -1,16 +1,12 @@
-#! /usr/bin/env python
+#! /usr/bin/env python3
 
 # Import libraries for data analysis
-from __future__ import division
 import re
 import os
 import csv
 import sys
-#import tqdm
 import argparse
-#import openpyxl
 import textwrap
-import numpy as np
 import pandas as pd
 from datetime import datetime
 from pandas import Series, DataFrame
@@ -18,113 +14,161 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
 # Regular Expressions and static (unchanging) variables 
-SAMPLE_NAME_REGEXP = r'([\w \/\)\(\-\^\.\|]+) Turns Data'
 FILE_NAME_REGEXP = r'(.+)\.(.+)'
-HEADER_STRING = 'Experiment Logfile:'
 
-#########################################################
-### Section below contains functions for calculations ###
-#########################################################
+##############################################################################
+### Section below contains functions for reformatting and calculating data ###
+##############################################################################
+  
 
-def formatRawDf(rawDf):
+def reformatString(stringList):
+    '''Reformat the list of strings to make it more consistant by:
+        1. Convert to lower case
+        2. Substitute spaces for underscores _
+        3. Convert the + sign into _plus_
+        4. Covert the ^ carrot sign into _pwr_
+        5. Strip any trailing underscores (former spaces)
+        6. Strip any leading underscores (former spaces)'''
+    reformatedList = []
+    for string in stringList:
+        lowercased = string.lower()
+        noSpace = re.sub(r'[\/\s\.]', r'_', lowercased)
+        rmPlusSign = re.sub(r'[\+]', r'_plus_', noSpace)
+        rmCarrot = re.sub(r'[\^]', r'_pwr_', rmPlusSign)
+        rmMultiUnder = re.sub(r'_+', r'_', rmCarrot)
+        rightStripUnder = rmMultiUnder.rstrip('_')
+        leftStripUnder = rightStripUnder.lstrip('_')
+        reformatedList.append(leftStripUnder)
+    
+    return reformatedList
 
-    nullRows = rawDf.iloc[:,2::3].isnull().sum()
-    print '\nWarning: Null values below will be back filled'
+
+def convertDatetime(df):
+    '''Function to convert the row indexes (dates and times) into a proper datetime object we can use downstream'''
+    originalIndex = df.index
+    
+    dtIndex = []
+    for i in originalIndex:
+        temp = datetime.strptime(str(i), '%m/%d/%y %H:%M') # specify the month, date, year, hour, minutes
+        dtIndex.append(temp)
+    
+    df.index = dtIndex # replace original index with new datetime index
+    
+    return df
+
+
+def fillNa(df):
+    nullRows = df.isnull().sum()
+    
+    # Lets put some labels down
     nullRows.index.name = 'column_name'
     nullRows.name = 'null_value_count'
     nullRows = nullRows.reset_index()
-    print nullRows # Output to stdout
+    print('\nWarning: There are {} null values that will be back filled'.format(nullRows.null_value_count.sum()))
 
-    # print '\nWarning: The above null values were replaced with zeros'
+    # df_fill = df.fillna(0)
+    # df_fill = df.fillna(method='ffill', limit=1)
+    dfFilled = df.fillna(method='bfill', limit=1) # Do the backfill and limit it to only 1 consecutive row
     
-    # how to deal with NAs: fillna with zero, fill forward fill back
-    # I think backfill is best option, with limit 1, or fill zeros for more
-    # conservative take (use 'ffill' for forward fill)
-    rawFill = rawDf.fillna(method='bfill', limit=1)
-    #rawFill = rawDf.fillna(0) # fill with zeros
+    return dfFilled, nullRows
 
-    # Create a column with date and time merged
-    dtIndex = rawFill.iloc[:,0] + ' ' + rawFill.iloc[:,1]
 
-    # Convert the date into datetime objects
+def formatRawDf(rawDf):
+    '''Formats the raw data file by cleaning up the headers, assigning them properly and converting the row
+    names into proper datetime objects. Outputs two dataframes, one with original turns data and the other 
+    converted into meters (turns * 0.361)'''
+    header1 = reformatString(rawDf.iloc[0]) # grab row 0 and reformat to remove spaces and special chars
+    header2 = reformatString(rawDf.iloc[1])
+    header3 = reformatString(rawDf.iloc[2])
+    
+    rawDf.iloc[0] = header1 # replace the original row with the reformated row
+    rawDf.iloc[1] = header2
+    rawDf.iloc[2] = header3
+    
+    # Use the first three rows as a multiindex header (3 stacked headers)
+    rawDf.columns = [rawDf.iloc[0],rawDf.iloc[1],rawDf.iloc[2]]
+    rawDf = rawDf.drop(rawDf.index[[0,1,2]]) # Remove the original 3 rows from the df
+    rawDf.columns.names = ['sample', 'group', 'sensor'] # rename the three headers
+    
+    df = convertDatetime(rawDf) # Convert the row indexs (names) into proper datetime objects
+    formattedTurnsDf, nullRows = fillNa(df) # Back fill any single NA's that may show up in the formatted df
+    formattedDistanceDf = formattedTurnsDf.astype(float) * 0.361 # Convert turns to meters
 
-    dtIndex2 = []
+    return formattedTurnsDf, formattedDistanceDf, nullRows
 
-    for i in dtIndex:
-        temp = datetime.strptime(i, '%m/%d/%y %H:%M:%S')
-        dtIndex2.append(temp)
 
-    # Set this new datetime list as the index
-    df = rawFill  # copy the raw data frame with NAs filled
-    df.index = dtIndex2
+def customStartDateTime(formattedDistanceDf, customStart, customEnd):
+    """Use user defined start and end date times if specified. None will be specifed
+    for both customStart and customEnd if not specified (e.g. use all data)"""
 
-    # Filter out redundant date and time columns for each sample using slicing
-    # iloc means go by index location (titles were too long to deal with)
-    # slicing notation first ':' means we want all rows
-    # '2' means start at column 3, ':' means go through all columns,
-    # '3' means go in steps of 3 (jump over 2 columns so we can get just data)
-    df1 = df.iloc[:, 2::3]
+    if customStart != None:
+        try:
+            customStartDt = datetime.strptime(customStart, '%m/%d/%Y %H:%M')
+        except ValueError:
+            print("Check customStart time. Custom start date times should be formated as 'month/day/year hour:minute'")
+            print("(e.g. 9/5/2018). No leading zeros, years in four number format")
+            sys.exit(1) # quit the program
+    else:
+        customStartDt = customStart
 
-    # Add a name for all column headers
-    df1.columns.name = 'condition'
+    if customEnd != None:
+        try:
+            customEndDt = datetime.strptime(customEnd, '%m/%d/%Y %H:%M')
+        except ValueError:
+            print("Check customEnd time. Custom end date times should be formated as 'month/day/year hour:minute'")
+            print("(e.g. 9/5/2018). No leading zeros, years in four number format")
+            sys.exit(1) # quit the program
+    else:
+        customEndDt = customEnd
 
-    df2 = df1 * 0.361 # mult all turns data by 0.361 to convert turns to meters
+    selectedDistanceDf = formattedDistanceDf[customStartDt:customEndDt]
 
-    # Select the column names so we can rename them
-    colNames = df2.columns
+    return selectedDistanceDf
 
-    # Create a regular expression formula
-    REG_EXP = r'^([\w\/\s\^\-\+]+) Turns Data'
 
-    sampleName = re.search(REG_EXP, colNames[0])
+def getStartingTime(selectedDistanceDf):
+    """Determine the initial time point in the input data"""
+    startDt = selectedDistanceDf.index[0] # grab datetime index from very first row of data
+    startHr = startDt.hour
+    startMin = startDt.minute
+    
+    return startHr, startMin
 
-    # Loop through list of column headers. We want to:
-    # 1. Remove 'Turns Data' to obtain just the sample name
-    # 2. Remove any spaces, periods, slashes and plus signs
-    # 3. Replace with underscores '_'
-    newColNames = []
 
-    for name in colNames:
-        temp = re.search(REG_EXP, name)
-        origName = temp.group(1)
-        noSpaceName = re.sub(r'[\/\s\.]', r'_', origName)
-        rmPlusSign = re.sub(r'[\+]', r'_plus_', noSpaceName)
-        rmCarrot = re.sub(r'[\^]', r'_power_', rmPlusSign)
-        newColNames.append(rmCarrot)
+def calcBaseParam(startHr, startMin):
+    baseFraction = startMin / 60
+    baseParam = startHr + baseFraction
+    
+    return baseParam
 
-    df2.columns = newColNames # Sub the old column names for the new ones
-    df2.columns.name = 'condition'  # got erased, add back
-    df2.index.name = 'date_time'
 
-    return df2, nullRows  # returns formatted df and num of rows with null vals
+def resampleByHr(selectedDistanceDf, customGrpByHr, baseParam):
+    """Outputs a list of dictionaries with the rule as key, and resampledDf as value"""
+    customDfList = []
+    
+    if customGrpByHr == None:
+        customDfList = None
+    else:
+        for i in customGrpByHr:
+            ruleStr = i + 'H'
+            resampledDf = selectedDistanceDf.resample(rule=ruleStr, base=baseParam).sum()
+            customDfDict = {ruleStr:resampledDf}
+            customDfList.append(customDfDict)
+    
+    return customDfList
 
-def formatHourlyCumSum(df):
-    hourlyDf = df.resample('H')
-    hourlyCumSumDf = hourlyDf.cumsum()
 
-    return hourlyDf, hourlyCumSumDf
+def formatHourly(selectedDistanceDf, baseParam):
+    hourlyDf = selectedDistanceDf.resample(rule='H', base=baseParam).sum()
 
-def calcSumDistPerDay(df):
-    t = formattedDf.index # Get timeseries index
-    t2 = Series(t) # convert to series
-    uniqueDates = t2.map(pd.Timestamp.date).unique() # get unique dates only
+    return hourlyDf
 
-    uniqueList = []
 
-    # For each datetime object in unique dates, convert to strings so we can
-    # use them as dataframe indexes
-    for date in uniqueDates:
-        uniqueList.append(date.strftime('%Y-%m-%d'))
+def formatDaily(selectedDistanceDf, baseParam):
+    dailyDf = selectedDistanceDf.resample(rule="1d", base=baseParam).sum()
 
-    dateDict = {} # New dictionary for dataframe
+    return dailyDf
 
-    for date in uniqueList:
-        # Grab matching data, take sum and place in new dictionary
-        dateDict[date] = formattedDf[date].sum()
-
-    daySumDf = DataFrame(dateDict) # Turn into dataframe
-
-    return daySumDf
 
 def calcSessions(df):
     """Calculates running session data. Each session consists of a run phase
@@ -137,7 +181,7 @@ def calcSessions(df):
 
     colList = df.columns
 
-    sessionDict = {} # Dictionary to house all animal's session dataframes
+    sessionsDict = {} # Dictionary to house all animal's session dataframes
 
     # iterate over list of column names and use to access data from each column
     for pos, col in enumerate(colList):
@@ -261,9 +305,9 @@ def calcSessions(df):
         # Place each animal's session df into a session dict for all animals. 
         # Each animal's session dataframe can now be accessed by providing the 
         # animal name as the dictionary's key.
-        sessionDict[col] = sessionDf 
+        sessionsDict[col] = sessionDf 
 
-    return sessionDict
+    return sessionsDict
 
 def observed(x):
     """Used in calcObsCols(). Simple test to see if data is present. 
@@ -289,8 +333,8 @@ def calcVelocityCol(sessionDf):
     velocityCol.name = 'velocity(m/min)'
     return velocityCol
 
-def reformatSessions(sessionDict):
-    """Reformats the SessionDict from calcSessions(). Calculates and adds
+def reformatSessions(sessionsDict):
+    """Reformats the sessionsDict from calcSessions(). Calculates and adds
     new columns to each sessionDf including:
         1. Session column
         2. Run velocity column
@@ -299,7 +343,7 @@ def reformatSessions(sessionDict):
     Finally, it creates a new dataframe and reorganizes the columns."""
     reformatedDict = {} # new session dictionary for added and reformated cols
     
-    for animalName, df in sessionDict.iteritems():
+    for animalName, df in sessionsDict.items():
         
         # Do calculations and get columns
         runObsCol, restObsCol = calcObsCols(df)
@@ -326,14 +370,14 @@ def reformatSessions(sessionDict):
     return reformatedDict
 
 
-def calcPercentRunRest(sessionDict):
+def calcPercentRunRest(sessionsDict):
     '''Calculate the percentage the animal ran and rested of the total time the
     data was collected. If data was collected one row per minute, the number of
     rows in the raw data file should correspond to the sum total of minutes.'''
     # Create an empy dictionary list for creating a dataframe in the end
     dictList = []
 
-    for animalName, df in sessionDict.iteritems():
+    for animalName, df in sessionsDict.items():
         sumMinsRun = df.run_mins.sum()
         sumDistRun = df['run_dist(m)'].sum()
         sumMinsRest = df.rest_mins.sum()
@@ -370,18 +414,16 @@ def calcPercentRunRest(sessionDict):
     return percentRunRestDf
 
 
-
-###########################################################################
-### Section below contains functions for input/output, graphing and     ###
-### parsing files                                                       ###
-###########################################################################
+###########################################################
+### Section below contains functions for plotting data  ###
+###########################################################
 
 def chunkLists(userList, chunkSize):
     """Use to split lists of columns into chunks of sublists for graphing"""
     chunkList = []
 
     # x goes from start of list to end in groups of chunkSize
-    for x in xrange(0, len(userList), chunkSize):
+    for x in range(0, len(userList), chunkSize):
         # Eg. If chunkSize = 6:
         # first loop: start = 0 and end = 6
         # second loop: start = 6 and end = 12
@@ -390,14 +432,11 @@ def chunkLists(userList, chunkSize):
         chunkList.append(chunk)
     return chunkList
 
-def plotGraphs(formattedDf, percentRunRestDf, newDirPath, cohortName):
+def plotGraphs(selectedDistanceDf, percentRunRestDf, hourlyDf, dailyDf, newDirPath, cohortName):
     """Make some plots"""
-    hourlyDf, hourlyCumSumDf = formatHourlyCumSum(formattedDf)
-    daySumDf = calcSumDistPerDay(formattedDf)
-
     with PdfPages(os.path.join(newDirPath, cohortName + '_graphs.pdf')) as pdf:
         # Barplot of daily distance sums
-        b = daySumDf.plot(kind='bar',figsize=(10,5), width=0.75, alpha=.75) #color=['#FFAAAA','#D46A6A','#801515','#550000'])
+        b = dailyDf.plot(kind='bar',figsize=(10,5), width=0.75, alpha=.75) #color=['#FFAAAA','#D46A6A','#801515','#550000'])
         b.set_title('{0}: Total Running Distance By Day'.format(cohortName), y=1.08)
         b.set_ylabel('Distance in meters')
         b.set_xlabel('Animal & Condition')
@@ -446,8 +485,38 @@ def plotGraphs(formattedDf, percentRunRestDf, newDirPath, cohortName):
             pdf.savefig(bbox_inches='tight')
             plt.clf()
 
-def outputAllToFile(rawDf, formattedDf, percentRunRestDf, nullRows, sessionDict,
-                        cohortName):
+
+####################################################################################
+### Section below contains functions for file input/output data & sanity checks  ###
+####################################################################################
+
+def checkInputFile(inputFileArg):
+    """Make sure the file exists"""
+    if not os.path.exists(inputFileArg):
+        print("{0} not found. Check path.".format(inputFileArg))
+        sys.exit(1)
+
+def checkHeader(rawDf):
+    HEADER0_NAME = 'Channel Name:'
+    HEADER1_NAME = 'Channel Group:'
+    HEADER2_NAME = 'Sensor Type:'
+
+    """Function to check the file's header."""
+    #Move to the next (first) row of data and assign it to a variable
+
+    # Try a search and find on the header row to match HEADER_STRING. If return
+    # error, print feedback and quit program.
+    if (rawDf.index[0] != HEADER0_NAME) or (rawDf.index[1] != HEADER1_NAME) or (rawDf.index[2] != HEADER2_NAME):
+        print("ERROR: This file is in the wrong format. ")
+        print("It's missing the proper headers (i.e. Channel Name, Channel Group, Sensor Type)")
+        sys.exit(1) # quit the program
+    else:
+        print('File header checks out.') 
+
+
+def outputAllToFile(formattedTurnsDf, formattedDistanceDf, selectedDistanceDf, 
+    baseParam, hourlyDf, dailyDf, customDfList, sessionsDict, reformattedDict, percentRunRestDf, 
+    nullRows, cohortName):
     """Creates a cohort folder in current directory and output's all the 
     data frames for each sample."""
 
@@ -458,78 +527,46 @@ def outputAllToFile(rawDf, formattedDf, percentRunRestDf, nullRows, sessionDict,
         os.makedirs(newDirPath)
 
     # output main formatted data frame
-    print '\nExporting results to CSV...'
-    print "Outputting raw dataframe"
+    print('\nExporting results to CSV...')
+    print("Outputting raw dataframe")
     rawDf.to_csv(os.path.join(newDirPath, cohortName +'_rawdata.csv'))
-    print "Outputting number of null rows."
+    print("Outputting number of null rows.")
     nullRows.to_csv(os.path.join(newDirPath, cohortName +'_num_null.csv'))
-    print "Outputting formatted dataframe."
-    formattedDf.to_csv(os.path.join(newDirPath, cohortName +'_formatted.csv'))
-    print "Outputting calculated percent run and rest."
-    percentRunRestDf.to_csv(os.path.join(newDirPath, cohortName + '_percentRunRest.csv'))
+    print("Outputting turns formatted dataframe.")
+    formattedTurnsDf.to_csv(os.path.join(newDirPath, cohortName +'_formatted_turns.csv'))
+    print("Outputting formatted distance dataframe.")
+    formattedDistanceDf.to_csv(os.path.join(newDirPath, cohortName +'_formatted_distance.csv'))
+    print("Outputting df with selected hours, if not specified will output all data")
+    selectedDistanceDf.to_csv(os.path.join(newDirPath, cohortName +'_selected_distance.csv'))
+    
+    print("Outputting custom data bins.")
+    if customDfList != None:
+        for dfDict in customDfList:
+            for rule, customDf in dfDict.items():
+                customDf.to_csv(os.path.join(newDirPath, cohortName +'_bin_by_' + rule + '_' + '.csv'))
 
-    hourlyDf, hourlyCumSumDf = formatHourlyCumSum(formattedDf)
-    daySumDf = calcSumDistPerDay(formattedDf)
-
-    print "Outputting data binned by the hour."
+    print("Outputting data binned by the hour.")
     hourlyDf.to_csv(os.path.join(newDirPath, cohortName +'_bin_by_hour.csv'))
-    print "Outputting cumilative sum data by the hour."
-    hourlyCumSumDf.to_csv(os.path.join(newDirPath, cohortName +'_cumsum_by_hour.csv'))
-    print "Outputting data for total distance per day"
-    daySumDf.to_csv(os.path.join(newDirPath, cohortName +'_sum_dist_by_day.csv'))
+    print("Outputting data binned by day")
+    dailyDf.to_csv(os.path.join(newDirPath, cohortName +'_bin_by_day.csv'))
     # Output the plots
     # Output session data frames
-    print '\nExporting results to CSV...'
-    for animalName, sessionDf in sessionDict.iteritems():
-        print "Outputting session data for: ", animalName
-        sessionDf.to_csv(os.path.join(newDirPath, animalName + '_sessions.csv'))
-        # Output a readme explaination maybe?
+    print("Outputting calculated percent run and rest.")
+    percentRunRestDf.to_csv(os.path.join(newDirPath, cohortName + '_percentRunRest.csv'))
+    print('\nExporting results to CSV...')
 
-    print '\nMaking plots...'
-    plotGraphs(formattedDf, percentRunRestDf, newDirPath, cohortName)
-    print '**Done**.'
+    animalSessionsDir = os.path.join(newDirPath, 'animal_sessions')
+    if not os.path.exists(animalSessionsDir):
+        os.makedirs(animalSessionsDir)
 
-def checkInputFile(inputFileArg):
-    """Make sure the file exists"""
-    if not os.path.exists(inputFileArg):
-        print "{0} not found. Check path.".format(inputFileArg)
-        sys.exit(1)
+    for animalName, sessionDf in sessionsDict.items():
+        print("Outputting session data for: ", animalName)
+        sessionDf.to_csv(os.path.join(animalSessionsDir, animalName[0] +'_' + animalName[1] + '_sessions.csv'))
 
-def checkAscFileHeader(readerObj, HEADER_STRING):
-    """Function to check the file's header."""
-    #Move to the next (first) row of data and assign it to a variable
-    firstHeader = readerObj.next()
+    print('\nMaking plots...')
+    plotGraphs(selectedDistanceDf, percentRunRestDf, hourlyDf, dailyDf, newDirPath, cohortName)
+    print('**Done**.')
 
-    # Try a search and find on the header row to match HEADER_STRING. If return
-    # error, print feedback and quit program.
-    try:
-        searchHeader = re.search(HEADER_STRING, firstHeader[0])
-        searchResult = searchHeader.group(0) # group(0) returns whole string
-        return firstHeader 
-    except AttributeError:
-        print "ERROR: This file is in the wrong format or is the wrong file type."
-        sys.exit(1) # quit the program
-
-
-def checkSampleHeader(SAMPLE_NAME_REGEXP, rowOfData):
-    """Function to check the second header"""
-    rowLength = len(rowOfData)
-
-    # Use the modulo (%) operator which yeilds remainder after dividing by a
-    # number. Sample data should be in triplicate columns. If it's not, quit.
-    # Else, reformat the header and return formated one
-    if rowLength % 3 != 0:
-        print "ERROR: Sample data are not in triplicate columns."
-        sys.exit(1) # quit the program
-
-def checkCsvHeader(user_input):
-    with open(user_input, 'rU') as csvFile:
-    # Turns the open file into an object we can use to pull data from
-        fileReader = csv.reader(csvFile, delimiter=",", quotechar='"')
-        header = fileReader.next()
-        if len(header) % 3 != 0:
-            print "ERROR: Data are not in triplicate columns. Check file."
-            sys.exit(1) # quit the program
         
 def getFilenameInfo(FILE_NAME_REGEXP, user_args_input):
     """Function to split the filename and extension and return both."""
@@ -550,63 +587,6 @@ def getFilenameInfo(FILE_NAME_REGEXP, user_args_input):
     # return information file name without extension (e.g. '.csv', '.asc')
     return  fileNameNoExtension, fileExtension #, wholeFileName, fileDir
 
-def parse_asc(user_input):
-    """Function to take asc file and split the animal summary and actual data
-    into two files. Returns the raw csv name."""
-
-    with open(user_input, 'rU') as csvFile:
-    # Turns the open file into an object we can use to pull data from
-        fileReader = csv.reader(csvFile, delimiter=",", quotechar='"')
-        
-        # Check first file header and assign to variable
-        fileHeader = checkAscFileHeader(fileReader, HEADER_STRING)
-
-        miceCsvName = cohortName + '_asc_summary.csv'
-        rawCsvName = cohortName + '_asc_rawdata.csv'
-
-        # Create a mice data csv file
-        with open(miceCsvName, 'wb') as miceOutFile:
-            miceFileWriter = csv.writer(miceOutFile)
-
-            # Create a raw data csv file
-            with open(rawCsvName, 'wb') as rawOutFile:
-                rawFileWriter = csv.writer(rawOutFile)
-
-                # First time around?
-                firstRowOfFile = True
-
-                # Make sure to check the data header too
-                checkedSampleHeader = False
-
-                # Iterate through every line (row) of the original file
-                for row in fileReader:
-                    # Put all mouse summary data into the mice sheet, data
-                    # should be in less than 3 columns
-                    if len(row) < 3:
-                        # If very first row, place the checked header
-                        if firstRowOfFile:
-                            miceFileWriter.writerow(fileHeader)
-                            # Next round, set to false to skip this part
-                            firstRowOfFile = False
-                        # For the rest of the rows, just dump
-                        miceFileWriter.writerow(row)
-                
-                    # Real data should have at least 3 columns
-                    else:
-                        # Check second header, is it a multiple of 3?
-                        if not checkedSampleHeader:
-                            checkSampleHeader(SAMPLE_NAME_REGEXP, row)
-                            checkedSampleHeader = True           
-                            
-                            # Raw data file takes header row as is
-                            rawFileWriter.writerow(row)
-
-                            print "\n**The file is in the correct format.**"
-
-                        # Once the header is good
-                        else:
-                            rawFileWriter.writerow(row)
-    return rawCsvName
 
 def parseUserInput():
     """Use argparse to handle user input for program"""
@@ -615,23 +595,23 @@ def parseUserInput():
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
         
-        description="""%(prog)s parses mouse running wheel data that has been 
-        output into a ASCII file directly obtained from the Vitalview Software. 
-        The input file should have two headers. The first will be the the over 
-        all file header that says 'Experiment Logfile:' followed by the date. 
-        Second, the data header below in comma delimited format (csv)
+        description="""%(prog)s parses mouse running wheel data and calculates 
+        run and rest sessions.  
 
-        Option to use with csv files that have the mouse summary data removed.
-        However, the data must still be in triplicate columns.""",
+        The program takes '.csv' data output from the 
+        Vitalview Software. The input file should have three levels of headers. 
+        From top to bottom. The header needs to be 'Channel Name:','Channel Group:' 
+        and 'Sensor Type:'""",
 
         epilog=textwrap.dedent("""\
         The script will output a csv file for each of the following:
-            1) Animal data            <cohort_name>_asc_summary.csv
-            2) Raw data               <cohort_name>_asc_rawdata.csv
-            3) Formatted              <cohort_name>_formatted.csv
+            1) Raw data               <cohort_name>_rawdata.csv
+            2) Formatted turns        <cohort_name>_formatted_turns.csv
+            3) Formatted distance     <cohort_name>_formatted_distance.csv
+            4) Selected distance      <cohort_name>_selected_distance.csv (based on customStart/End inputs)
             4) Bin by hr              <cohort_name>_bin_by_hour.csv
-            5) Cumilative sum by hr   <cohort_name>_cumsum_by_hour.csv
-            6) Sum distance by day    <cohort_name>_sum_dist_by_day.csv
+            5) Bin by days            <cohort_name>_bin_by_day.csv
+            6) Bin by <X> Hours       <cohort_name>_bin_by_<user_defined_hours>H.csv
             7) Sessions               <animal>_sessions.csv
             8) Percent Run & rest     <cohort_name>_percentRunRest.csv
             9) Graphs                 <cohort_name>_graphs.pdf
@@ -645,18 +625,32 @@ def parseUserInput():
     parser.add_argument("input",
         help="File name and/or path to experiment_file.asc or .csv")
     
-    parser.add_argument("-v", "--version", action="version",
+    parser.add_argument("-S", '--customStart', default=None, 
+        help=textwrap.dedent("""Specify custom start time in 'month/day/year hour:min' format. (e.g. '9/5/2018 11:30').
+        Make sure to place in quotes and leave a space between year and hour.  Add no leading zeros. The
+        hour should be in military time (24 hour) format. Defaults to None"""))
+
+    parser.add_argument("-E",'--customEnd', default=None, 
+        help=textwrap.dedent("""Specify custom end time in 'month/day/year hour:min' format. (e.g. '9/5/2018 11:30').
+        Make sure to place in quotes and leave a space between year and hour.  Add no leading zeros. The
+        hour should be in military time (24 hour) format. Defaults to None"""))
+
+    parser.add_argument("-H",'--customGrpByHr', default=None, action='append',
+        help=textwrap.dedent("""Optional: specify number of hours to group data by"""))
+    
+    parser.add_argument("-V", "--version", action="version",
                         version=textwrap.dedent("""\
         %(prog)s
         -----------------------   
-        Version:    0.4.1
-        Updated:    06/30/2016
+        Version:    0.5.0
+        Updated:    09/5/2018
         By:         Prech Uapinyoying
         Website:    https://github.com/puapinyoying"""))
 
     args = parser.parse_args()
     
     return args
+
 
 # Grab parsed user input.
 user_args = parseUserInput()
@@ -668,25 +662,39 @@ if user_args.input:
 
     # Next grab the file name to use as cohort and file extension
     cohortName, fileExtension = getFilenameInfo(FILE_NAME_REGEXP, user_args.input)
-    
-    if fileExtension == 'asc':
-        rawCsvName = parse_asc(user_args.input)
-        rawDf = pd.read_csv(rawCsvName)
 
-    elif fileExtension == 'csv':
-        checkCsvHeader(user_args.input)
-        rawDf = pd.read_csv(user_args.input)
+    if fileExtension == 'csv':
+        rawDf = pd.read_csv(user_args.input, index_col=[0], header=None)
 
     else:
-        print "This program only excepts the raw '.asc' file or '.csv' files."
+        print("This program only excepts the raw '.csv' files.")
         sys.exit(1)
 
     # Start doing some calculations and creating dataframes
-    formattedDf, nullRows = formatRawDf(rawDf)
-    sessionsDict = calcSessions(formattedDf)
+    formattedTurnsDf, formattedDistanceDf, nullRows = formatRawDf(rawDf)
+
+    # Produce the formated dataframe with the user selected time windows
+    customStart = user_args.customStart
+    customEnd = user_args.customEnd
+    selectedDistanceDf = customStartDateTime(formattedDistanceDf, customStart, customEnd)
+
+    # Reformat the df to group the data by days, hours and custom amount of hours
+    startHr, startMin = getStartingTime(selectedDistanceDf)
+    baseParam = calcBaseParam(startHr, startMin)
+    hourlyDf = formatHourly(selectedDistanceDf, baseParam)
+    dailyDf = formatDaily(selectedDistanceDf, baseParam)
+
+    if user_args.customGrpByHr != None:
+        customDfList = resampleByHr(selectedDistanceDf, user_args.customGrpByHr, baseParam)
+    else:
+        customDfList = None
+
+    # Calculate the sessions and other stats
+    sessionsDict = calcSessions(selectedDistanceDf)
     reformattedDict = reformatSessions(sessionsDict)
     percentRunRestDf = calcPercentRunRest(reformattedDict)
 
     # Dump csvs into folders
-    outputAllToFile(rawDf, formattedDf, percentRunRestDf, nullRows, 
-        reformattedDict, cohortName)
+    outputAllToFile(formattedTurnsDf, formattedDistanceDf, selectedDistanceDf, 
+        baseParam, hourlyDf, dailyDf, customDfList, sessionsDict, reformattedDict, 
+        percentRunRestDf, nullRows, cohortName)
